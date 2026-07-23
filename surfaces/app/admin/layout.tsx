@@ -105,7 +105,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <ConsoleShell
       product="Cowrie Admin"
-      searchPlaceholder="Search transactions, users, disputes..."
       nav={nav}
       environment={{ label: "Production", tone: "production" }}
       user={{

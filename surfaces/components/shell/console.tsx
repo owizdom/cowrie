@@ -17,7 +17,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { CowrieMark } from "@/components/brand";
-import { Search } from "@/components/icons";
 import { cx } from "@/components/ui";
 
 export type NavItem = {
@@ -34,7 +33,6 @@ export function ConsoleShell({
   environment,
   user,
   footer,
-  searchPlaceholder,
   children,
 }: {
   product: string;
@@ -42,7 +40,6 @@ export function ConsoleShell({
   environment: { label: string; tone: "production" | "sandbox" };
   user: { name: string; role: string; initials: string };
   footer: React.ReactNode;
-  searchPlaceholder: string;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -70,21 +67,7 @@ export function ConsoleShell({
             <span className="text-[15px] font-semibold tracking-tight text-heading">{product}</span>
           </Link>
 
-          {/* search */}
-          <div className="mx-auto hidden max-w-2xl flex-1 md:block">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-subtle" />
-              <input
-                type="search"
-                placeholder={searchPlaceholder}
-                aria-label={searchPlaceholder}
-                className="w-full rounded-field border border-line bg-canvas py-2.5 pl-11 pr-16 text-[13px] text-ink placeholder:text-subtle focus:border-violet-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-100"
-              />
-              <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-line bg-white px-1.5 py-0.5 font-mono text-[10px] text-subtle">
-                ⌘K
-              </kbd>
-            </div>
-          </div>
+          <div className="flex-1" />
 
           <div className="ml-auto flex items-center gap-3 md:ml-0">
             <EnvironmentPill {...environment} />

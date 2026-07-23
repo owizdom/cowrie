@@ -222,7 +222,6 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
     <PortalContext.Provider value={{ apiKey }}>
       <ConsoleShell
         product="Cowrie Developers"
-        searchPlaceholder="Search endpoints, request IDs..."
         nav={NAV}
         environment={{ label: "Sandbox", tone: "sandbox" }}
         user={{

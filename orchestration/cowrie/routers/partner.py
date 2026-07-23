@@ -608,3 +608,125 @@ def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) ->
         "publishableKey": pair["publishable"],
         "warning": "The secret key is shown once. Store it now.",
     }
+
+
+@router.post("/keys", status_code=status.HTTP_201_CREATED)
+def create_key(
+    key: ApiKey = Depends(require_scope("payments:write")),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Issue an additional key pair for the calling partner (FR 4.1).
+
+    Authenticated by an existing key, so a partner can rotate without support
+    involvement: create the new pair, migrate, then revoke the old one. The old
+    key keeps working until it is revoked, which is what makes a rotation
+    possible without downtime.
+    """
+    pair = generate_key_pair(key.environment or "sandbox")
+
+    secret = ApiKey(
+        partnerId=key.partnerId,
+        scopes="payments:read payments:write",
+        partnerName=key.partnerName,
+        contactName=key.contactName,
+        contactEmail=key.contactEmail,
+        label="Secret key",
+        prefix=pair["secret_prefix"],
+        environment=key.environment or "sandbox",
+    )
+    secret._keyHash = hash_secret(pair["secret"])
+    db.add(secret)
+
+    publishable = ApiKey(
+        partnerId=key.partnerId,
+        scopes="payments:read",
+        partnerName=key.partnerName,
+        contactName=key.contactName,
+        contactEmail=key.contactEmail,
+        label="Publishable key",
+        prefix=pair["publishable_prefix"],
+        environment=key.environment or "sandbox",
+    )
+    publishable._keyHash = hash_secret(pair["publishable"])
+    db.add(publishable)
+    db.flush()
+
+    audit.record(
+        db,
+        entity_type="ApiKey",
+        entity_id=secret.id,
+        action="apikey.created",
+        actor=ActorType.SYSTEM,
+        actor_id=f"apikey:{key.prefix}",
+        after={"partnerId": key.partnerId, "prefix": pair["secret_prefix"]},
+    )
+    db.commit()
+
+    return {
+        "secretKey": pair["secret"],
+        "publishableKey": pair["publishable"],
+        "warning": "The secret key is shown once. Store it now.",
+    }
+
+
+@router.get("/keys")
+def list_keys(
+    key: ApiKey = Depends(require_scope("payments:read")),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Every key this partner holds, by prefix. Secrets are never returned."""
+    rows = (
+        db.execute(
+            select(ApiKey).where(ApiKey.partnerId == key.partnerId).order_by(ApiKey.createdAt)
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "data": [
+            {
+                "id": row.id,
+                "label": row.label,
+                "prefix": row.prefix,
+                "scopes": row.scopes,
+                "environment": row.environment,
+                "revoked": row.revokedAt is not None,
+                "current": row.id == key.id,
+                "lastUsedAt": row.lastUsedAt.isoformat() if row.lastUsedAt else None,
+                "requestCount": row.requestCount,
+                "createdAt": row.createdAt.isoformat(),
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.post("/keys/{key_id}/revoke")
+def revoke_key(
+    key_id: str,
+    key: ApiKey = Depends(require_scope("payments:write")),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Revoke a key. Refuses the key making the request, so a partner cannot
+    lock itself out in one call."""
+    target = db.get(ApiKey, key_id)
+    if target is None or target.partnerId != key.partnerId:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such key")
+    if target.id == key.id:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "That is the key you are using. Create a replacement first.",
+        )
+
+    target.revoke()
+    audit.record(
+        db,
+        entity_type="ApiKey",
+        entity_id=target.id,
+        action="apikey.revoked",
+        actor=ActorType.SYSTEM,
+        actor_id=f"apikey:{key.prefix}",
+        after={"prefix": target.prefix},
+    )
+    db.commit()
+    return {"id": target.id, "revoked": True}
