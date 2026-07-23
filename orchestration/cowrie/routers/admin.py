@@ -757,3 +757,71 @@ def performance_report(
             "withinWorstCase": sum(1 for d in durations if d <= 60),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# SRS 2.3 - "Admin (role grants)"
+# ---------------------------------------------------------------------------
+
+
+class NewOperator(BaseModel):
+    email: str = Field(min_length=5, max_length=255)
+    fullName: str = Field(min_length=2, max_length=160)
+    role: AdminRole = AdminRole.SUPPORT
+    password: str = Field(min_length=8, max_length=128)
+
+
+@router.get("/team")
+def team(
+    admin: AdminUser = Depends(require_role(AdminRole.SUPPORT)),
+    db: Session = Depends(get_session),
+) -> dict:
+    rows = db.execute(select(AdminUser).order_by(AdminUser.createdAt)).scalars().all()
+    return {
+        "team": [
+            {
+                "id": a.id,
+                "email": a.email,
+                "fullName": a.fullName,
+                "role": str(a.role),
+                "createdAt": a.createdAt.isoformat(),
+            }
+            for a in rows
+        ]
+    }
+
+
+@router.post("/team", status_code=status.HTTP_201_CREATED)
+def create_operator(
+    body: NewOperator,
+    admin: AdminUser = Depends(require_role(AdminRole.ADMIN)),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Create a console operator.
+
+    Admin role only. SRS 2.3 gives role grants to the Admin privilege and to no
+    other, which is why this is not a public sign-up: an open registration form
+    on a compliance console would hand anyone the transaction register.
+    """
+    from ..security import hash_secret as _hash
+
+    if db.execute(select(AdminUser).where(AdminUser.email == body.email)).scalar_one_or_none():
+        raise HTTPException(status.HTTP_409_CONFLICT, "That email already has console access.")
+
+    operator = AdminUser(email=body.email, fullName=body.fullName, role=body.role)
+    operator._passwordHash = _hash(body.password)
+    db.add(operator)
+    db.flush()
+
+    audit.record(
+        db,
+        entity_type="AdminUser",
+        entity_id=operator.id,
+        action="admin.role_granted",
+        actor=ActorType.ADMIN,
+        actor_id=admin.email,
+        after={"email": body.email, "role": str(body.role)},
+    )
+    db.commit()
+
+    return {"id": operator.id, "email": operator.email, "role": str(operator.role)}

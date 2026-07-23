@@ -84,6 +84,25 @@ def decode_token(token: str, audience: str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
+def generate_key_pair(environment: str = "sandbox") -> dict[str, str]:
+    """FR 4.1 - "Let businesses generate API key pairs".
+
+    A pair, not a single key, because the two halves have different exposure:
+    the publishable key identifies the partner and may sit in client code, while
+    the secret key authorises money movement and must never leave their server.
+    Collapsing them into one key would mean the credential that can send a
+    payment is the same one they paste into a browser.
+    """
+    secret_body = secrets.token_hex(16)
+    publishable_body = secrets.token_hex(12)
+    return {
+        "secret": f"sk_{environment}_{secret_body}",
+        "secret_prefix": f"sk_{environment}_{secret_body[:6]}",
+        "publishable": f"pk_{environment}_{publishable_body}",
+        "publishable_prefix": f"pk_{environment}_{publishable_body[:6]}",
+    }
+
+
 def generate_api_key(environment: str = "sandbox") -> tuple[str, str]:
     """Return (plaintext_key, public_prefix).
 

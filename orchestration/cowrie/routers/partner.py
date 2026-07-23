@@ -32,7 +32,7 @@ from ..config import settings
 from ..db import get_session
 from ..enums import ActorType, DemoScenario, IntentStatus, TransactionState, WebhookStatus
 from ..models import ApiKey, PaymentIntent, Transaction, User, Webhook
-from ..security import generate_webhook_secret, hash_secret
+from ..security import generate_key_pair, generate_webhook_secret, hash_secret
 from ..services import audit, transfer_service, webhooks
 from ..services.quote_engine import engine as quote_engine
 from .deps import require_scope
@@ -521,3 +521,82 @@ def webhook_deliveries(
     limit: int = Query(default=50, le=200),
 ) -> dict:
     return {"data": webhooks.history(db, partner_id=key.partnerId, limit=limit)}
+
+
+# ---------------------------------------------------------------------------
+# FR 4.1 - business onboarding
+# ---------------------------------------------------------------------------
+
+
+class PartnerSignup(BaseModel):
+    """A business registering for API access."""
+
+    organisation: str = Field(min_length=2, max_length=160)
+    email: str = Field(min_length=5, max_length=255)
+    country: str = Field(default="NG", min_length=2, max_length=2)
+
+
+@router.post("/partners", status_code=status.HTTP_201_CREATED, tags=["cowrie-api"])
+def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) -> dict:
+    """Create a partner and issue its first key pair (FR 4.1).
+
+    Public, because a business cannot obtain a key without one and there is no
+    prior credential to authenticate with. Sandbox only: a live corridor needs
+    the business verified first, which is a manual step, not a form.
+    """
+    import uuid as _uuid
+
+    existing = db.execute(
+        select(ApiKey).where(ApiKey.partnerName == body.organisation.strip())
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "An organisation with that name is already registered.",
+        )
+
+    partner_id = str(_uuid.uuid4())
+    pair = generate_key_pair("sandbox")
+
+    secret = ApiKey(
+        partnerId=partner_id,
+        scopes="payments:read payments:write",
+        partnerName=body.organisation.strip(),
+        label="Secret key",
+        prefix=pair["secret_prefix"],
+        environment="sandbox",
+    )
+    secret._keyHash = hash_secret(pair["secret"])
+    db.add(secret)
+
+    publishable = ApiKey(
+        partnerId=partner_id,
+        scopes="payments:read",
+        partnerName=body.organisation.strip(),
+        label="Publishable key",
+        prefix=pair["publishable_prefix"],
+        environment="sandbox",
+    )
+    publishable._keyHash = hash_secret(pair["publishable"])
+    db.add(publishable)
+    db.flush()
+
+    audit.record(
+        db,
+        entity_type="ApiKey",
+        entity_id=secret.id,
+        action="partner.registered",
+        actor=ActorType.SYSTEM,
+        actor_id=body.email,
+        after={"organisation": body.organisation, "partnerId": partner_id},
+    )
+    db.commit()
+
+    return {
+        "partnerId": partner_id,
+        "organisation": body.organisation.strip(),
+        "environment": "sandbox",
+        "secretKey": pair["secret"],
+        "publishableKey": pair["publishable"],
+        "warning": "The secret key is shown once. Store it now.",
+    }

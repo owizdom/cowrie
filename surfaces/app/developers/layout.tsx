@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 import { CowrieMark } from "@/components/brand";
 import { Book, Chart, Flask, Home, Key, Settings, Webhook } from "@/components/icons";
 import { ConsoleShell, SystemStatus, type NavItem } from "@/components/shell/console";
-import { Button, ErrorText, Spinner, cx, inputClass } from "@/components/ui";
+import { Button, CopyButton, ErrorText, Spinner, cx, inputClass } from "@/components/ui";
 import { api } from "@/lib/api";
 import { PortalContext } from "./portal-context";
 
@@ -32,6 +32,10 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [org, setOrg] = useState("");
+  const [orgEmail, setOrgEmail] = useState("");
+  const [issued, setIssued] = useState<{ secretKey: string; publishableKey: string } | null>(null);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(STORE);
@@ -48,6 +52,44 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
   }
 
   if (!apiKey) {
+    // Keys were just issued — show them once, then continue.
+    if (issued) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
+          <div className="w-full max-w-[420px] space-y-5">
+            <div className="flex items-center gap-2">
+              <CowrieMark className="h-6 w-6 text-violet-600" />
+              <span className="text-[15px] font-semibold tracking-tight text-heading">
+                Cowrie Developers
+              </span>
+            </div>
+
+            <div>
+              <h1 className="text-lg font-bold text-heading">Your keys</h1>
+              <p className="mt-1 text-[13px] text-muted">
+                The secret key is shown once. Store it now.
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <KeyRow label="Secret key" value={issued.secretKey} />
+              <KeyRow label="Publishable key" value={issued.publishableKey} />
+            </div>
+
+            <Button
+              full
+              onClick={() => {
+                window.localStorage.setItem(STORE, issued.secretKey);
+                setApiKey(issued.secretKey);
+              }}
+            >
+              Continue
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
         <form
@@ -57,11 +99,19 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
             setBusy(true);
             setError("");
             try {
-              await api("/v1/stats?days=1", { apiKey: draft.trim() });
-              window.localStorage.setItem(STORE, draft.trim());
-              setApiKey(draft.trim());
+              if (mode === "signin") {
+                await api("/v1/stats?days=1", { apiKey: draft.trim() });
+                window.localStorage.setItem(STORE, draft.trim());
+                setApiKey(draft.trim());
+              } else {
+                const result = await api<{ secretKey: string; publishableKey: string }>(
+                  "/v1/partners",
+                  { method: "POST", body: { organisation: org, email: orgEmail } },
+                );
+                setIssued(result);
+              }
             } catch (err) {
-              setError(err instanceof Error ? err.message : "That key was not accepted.");
+              setError(err instanceof Error ? err.message : "That did not work.");
             } finally {
               setBusy(false);
             }
@@ -74,25 +124,56 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
             </span>
           </div>
 
-          <h1 className="text-lg font-bold text-heading">Sign in</h1>
+          <h1 className="text-lg font-bold text-heading">
+            {mode === "signin" ? "Sign in" : "Create an account"}
+          </h1>
 
-          <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-ink">Secret key</span>
-            <input
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="ck_sandbox_..."
-              autoComplete="off"
-              spellCheck={false}
-              className={cx(inputClass, "font-mono text-[12px]")}
-            />
-          </label>
+          {mode === "signin" ? (
+            <label className="block">
+              <span className="mb-1.5 block text-[13px] font-medium text-ink">Secret key</span>
+              <input
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                placeholder="sk_sandbox_..."
+                autoComplete="off"
+                spellCheck={false}
+                className={cx(inputClass, "font-mono text-[12px]")}
+              />
+            </label>
+          ) : (
+            <>
+              <label className="block">
+                <span className="mb-1.5 block text-[13px] font-medium text-ink">Organisation</span>
+                <input value={org} onChange={(e) => setOrg(e.target.value)} required minLength={2} className={inputClass} />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[13px] font-medium text-ink">Work email</span>
+                <input type="email" value={orgEmail} onChange={(e) => setOrgEmail(e.target.value)} required className={inputClass} />
+              </label>
+            </>
+          )}
 
           {error ? <ErrorText>{error}</ErrorText> : null}
 
-          <Button type="submit" full loading={busy} disabled={!draft.trim()}>
-            Continue
+          <Button
+            type="submit"
+            full
+            loading={busy}
+            disabled={mode === "signin" ? !draft.trim() : !org.trim() || !orgEmail.trim()}
+          >
+            {mode === "signin" ? "Continue" : "Create account"}
           </Button>
+
+          <p className="text-center text-[13px] text-muted">
+            {mode === "signin" ? "No account yet? " : "Already have a key? "}
+            <button
+              type="button"
+              onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}
+              className="font-semibold text-violet-600"
+            >
+              {mode === "signin" ? "Create one" : "Sign in"}
+            </button>
+          </p>
         </form>
       </div>
     );
@@ -126,5 +207,18 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
         {children}
       </ConsoleShell>
     </PortalContext.Provider>
+  );
+}
+
+
+function KeyRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-field border border-line bg-white p-3">
+      <p className="text-[11px] text-subtle">{label}</p>
+      <div className="mt-1 flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink">{value}</code>
+        <CopyButton value={value} label={label} />
+      </div>
+    </div>
   );
 }
