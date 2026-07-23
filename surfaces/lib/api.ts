@@ -10,7 +10,18 @@
  * sent to each other's endpoints - a cookie would be attached to all of them.
  */
 
-export const API_BASE = "/api";
+/**
+ * Where the orchestration tier lives.
+ *
+ * Same-origin `/api` in development, where next.config.ts rewrites it. In a
+ * deployment the two services have separate hostnames, so the base is the API's
+ * own origin: Next bakes rewrite destinations into the build manifest, and it
+ * does not proxy WebSocket upgrades at all - the live transfer status in
+ * SRS 3.4 would silently never connect.
+ */
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL}`
+  : "/api";
 
 export type Audience = "cowriepay" | "admin" | "regulator";
 
@@ -113,8 +124,11 @@ export function openSocket(
   const audience: Audience = channel === "admin" ? "admin" : "cowriepay";
   const token = channel === "public" ? "" : (getToken(audience) ?? "");
 
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${protocol}//${window.location.host}/api/ws/${channel}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  const base = process.env.NEXT_PUBLIC_API_URL;
+  const url = base
+    ? `${base.replace(/^http/, "ws")}/ws/${channel}${query}`
+    : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api/ws/${channel}${query}`;
 
   let socket: WebSocket | null = null;
   let closed = false;

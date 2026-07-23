@@ -115,7 +115,18 @@ class OtpService:
         whether it still has to show it on screen. Reporting success when
         nothing was sent would strand the user on a code they never receive.
         """
-        if not email or not settings.smtp_host:
+        if not email:
+            print(f"[otp] {purpose} code for {identifier}: {code} (shown on screen)")
+            return False
+
+        # HTTP first. Most platform hosts block outbound SMTP ports to stop
+        # spam, so on a deployment port 587 fails with "Network is unreachable"
+        # while an HTTPS API on 443 goes straight through.
+        if settings.resend_api_key:
+            if self._send_via_resend(email=email, code=code):
+                return True
+
+        if not settings.smtp_host:
             print(f"[otp] {purpose} code for {identifier}: {code} (shown on screen)")
             return False
 
@@ -145,6 +156,38 @@ class OtpService:
             # showing the code rather than failing the registration.
             print(f"[otp] email delivery failed ({exc}); showing the code instead")
             return False
+
+    def _send_via_resend(self, *, email: str, code: str) -> bool:
+        """Send over HTTPS rather than SMTP.
+
+        Returns False on any failure so the caller falls back rather than
+        leaving the user waiting for a code that is not coming.
+        """
+        import httpx
+
+        try:
+            response = httpx.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+                json={
+                    "from": settings.resend_from,
+                    "to": [email],
+                    "subject": f"{code} is your Cowrie code",
+                    "text": (
+                        f"Your Cowrie verification code is {code}.\n\n"
+                        "It expires in 10 minutes and can only be used once.\n"
+                        "If you did not request it, you can ignore this message."
+                    ),
+                },
+                timeout=10,
+            )
+            if response.status_code < 300:
+                print(f"[otp] code emailed to {email}")
+                return True
+            print(f"[otp] resend rejected the request ({response.status_code}): {response.text[:200]}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[otp] resend unreachable ({exc})")
+        return False
 
     # -- verifying ----------------------------------------------------------
     def verify(self, *, challenge_id: str, code: str) -> Challenge:

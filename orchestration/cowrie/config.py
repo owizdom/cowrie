@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     a demo, so its absence degrades rather than breaks."""
 
     # ---- one-time code delivery (FR 1.1) ---------------------------------
+    resend_api_key: str = ""
+    """Preferred channel. Sends over HTTPS, which platform hosts allow; they
+    routinely block outbound SMTP ports, so smtp_* below works locally and
+    fails on a deployment with "Network is unreachable"."""
+    resend_from: str = "Cowrie <onboarding@resend.dev>"
+
     smtp_host: str = ""
     """Empty means the code is shown on screen instead of emailed.
 
@@ -139,7 +145,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://localhost:3001",
     ]
-    cors_origin_regex: str = r"https://.*\.vercel\.app|https://.*\.onrender\.com"
+    cors_origin_regex: str = r"https://.*\.up\.railway\.app|https://.*\.vercel\.app|https://.*\.onrender\.com"
 
     @property
     def is_sqlite(self) -> bool:

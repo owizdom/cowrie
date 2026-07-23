@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   Alert,
   Chart,
@@ -38,7 +38,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [checking, setChecking] = useState(true);
   const [counts, setCounts] = useState<{ kyc: number; disputes: number }>({ kyc: 0, disputes: 0 });
   const pathname = usePathname();
-  const router = useRouter();
 
   const loadOverview = useCallback(async () => {
     try {
@@ -126,8 +125,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             onClick={() => {
               clearToken("admin");
               window.localStorage.removeItem("cowrie.admin.profile");
+              // Reset the URL without a Next navigation. router.push() would
+              // walk the route tree while the current page is still mounted,
+              // so every admin page would briefly remount and fire its fetches
+              // against a token that no longer exists.
+              window.history.replaceState(null, "", "/admin");
               setAdmin(null);
-              router.push("/admin");
             }}
             className="w-full rounded-lg px-3 py-2 text-left text-[12px] font-medium text-muted transition-colors hover:bg-canvas hover:text-ink"
           >
