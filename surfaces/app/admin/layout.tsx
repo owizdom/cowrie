@@ -125,12 +125,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             onClick={() => {
               clearToken("admin");
               window.localStorage.removeItem("cowrie.admin.profile");
-              // Reset the URL without a Next navigation. router.push() would
-              // walk the route tree while the current page is still mounted,
-              // so every admin page would briefly remount and fire its fetches
-              // against a token that no longer exists.
-              window.history.replaceState(null, "", "/admin");
-              setAdmin(null);
+              // A full document navigation rather than a client-side push: it
+              // lands on the base and discards every mounted page at once, so
+              // no admin route can remount and fire a request with a token
+              // that has just been cleared.
+              window.location.href = "/";
             }}
             className="w-full rounded-lg px-3 py-2 text-left text-[12px] font-medium text-muted transition-colors hover:bg-canvas hover:text-ink"
           >

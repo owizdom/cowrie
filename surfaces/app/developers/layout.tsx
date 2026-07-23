@@ -242,8 +242,7 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
               type="button"
               onClick={() => {
                 window.localStorage.removeItem(STORE);
-                setApiKey("");
-                setDraft("");
+                window.location.href = "/";
               }}
               className="w-full rounded-lg px-3 py-2 text-left text-[12px] font-medium text-muted transition-colors hover:bg-canvas hover:text-ink"
             >

@@ -151,7 +151,7 @@ export default function RegulatorPage() {
             <Badge tone="neutral">read-only</Badge></div>
           <div className="flex items-center gap-3">
             <Link href="/regulator/guide" className="text-[13px] font-semibold text-violet-600">Guide</Link>
-            <Button size="sm" variant="ghost" onClick={() => { clearToken("regulator"); setSignedIn(false); }}>Sign out</Button>
+            <Button size="sm" variant="ghost" onClick={() => { clearToken("regulator"); window.location.href = "/"; }}>Sign out</Button>
           </div>
         </div>
       </header>

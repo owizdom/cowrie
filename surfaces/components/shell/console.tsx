@@ -17,7 +17,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { CowrieMark } from "@/components/brand";
-import { Search, Settings, Bell } from "@/components/icons";
+import { Search, Bell } from "@/components/icons";
 import { cx } from "@/components/ui";
 
 export type NavItem = {
@@ -112,13 +112,6 @@ export function ConsoleShell({
               </span>
             </div>
 
-            <button
-              type="button"
-              className="hidden h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-canvas lg:flex"
-              aria-label="Settings"
-            >
-              <Settings className="h-[18px] w-[18px]" />
-            </button>
           </div>
         </div>
       </header>
