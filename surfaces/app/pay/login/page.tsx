@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CowrieMark } from "@/components/brand";
 import { Backspace, ChevronLeft, Info, ShieldCheck } from "@/components/icons";
@@ -40,7 +41,7 @@ export default function LoginPage() {
   const { signIn, user, loading } = useSession();
 
   const [phone, setPhone] = useState<string | null>(null);
-  const [phoneDraft, setPhoneDraft] = useState("+2348012345678");
+  const [phoneDraft, setPhoneDraft] = useState("");
   const [pin, setPin] = useState("");
   const [keys, setKeys] = useState<number[]>([]);
   const [error, setError] = useState("");
@@ -161,10 +162,15 @@ export default function LoginPage() {
               />
             </div>
             {error ? <ErrorText>{error}</ErrorText> : null}
-            <Button type="submit" size="lg" full>
+            <Button type="submit" size="lg" full disabled={!phoneDraft.trim()}>
               Continue
             </Button>
           </form>
+
+          <p className="mt-6 text-center text-[13px] text-muted">
+            New to Cowrie?{" "}
+            <Link href="/pay/register" className="font-semibold text-violet-600">Create an account</Link>
+          </p>
 
 
         </div>

@@ -41,9 +41,7 @@ export default function LandingPage() {
           <CowrieMark className="h-6 w-6 text-violet-600" />
           <span className="text-[15px] font-semibold tracking-tight text-heading">Cowrie</span>
         </span>
-        <Link href="/pay" className="text-[13px] font-semibold text-violet-600 hover:text-violet-700">
-          Open CowriePay →
-        </Link>
+
       </header>
 
       <main id="main" className="mx-auto max-w-4xl px-6">
@@ -57,11 +55,8 @@ export default function LandingPage() {
             days, because it detours through correspondent banks and dollars. Cowrie removes the detour.
           </p>
 
-          <div className="mt-8 flex flex-wrap items-start gap-4">
+          <div className="mt-8">
             <GetApp />
-            <Link href="/developers" className="inline-flex h-11 items-center rounded-field px-5 text-sm font-semibold text-muted hover:text-ink">
-              Developer portal
-            </Link>
           </div>
 
           <dl className="mt-16 flex flex-wrap gap-x-14 gap-y-8">

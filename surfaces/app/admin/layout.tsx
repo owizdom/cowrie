@@ -145,17 +145,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 // sign in
 // ---------------------------------------------------------------------------
 
-const DEMO_ROLES = [
-  { email: "amara@cowrie.demo", role: "Admin — full access" },
-  { email: "kwame@cowrie.demo", role: "Officer — export, freeze, disputes" },
-  { email: "zainab@cowrie.demo", role: "Reviewer — KYC decisions" },
-  { email: "david@cowrie.demo", role: "Engineer — treasury operations" },
-  { email: "blessing@cowrie.demo", role: "Support — read only" },
-];
-
 function AdminLogin({ onSignedIn }: { onSignedIn: (a: Admin) => void }) {
-  const [email, setEmail] = useState("amara@cowrie.demo");
-  const [password, setPassword] = useState("cowrie-demo");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -189,9 +181,7 @@ function AdminLogin({ onSignedIn }: { onSignedIn: (a: Admin) => void }) {
         >
           <div>
             <h1 className="text-lg font-bold text-heading">Compliance console</h1>
-            <p className="mt-1 text-[13px] text-muted">
-              Transaction monitoring, KYC review and reserve operations.
-            </p>
+
           </div>
 
           <div className="space-y-1.5">
@@ -228,28 +218,6 @@ function AdminLogin({ onSignedIn }: { onSignedIn: (a: Admin) => void }) {
             Sign in
           </Button>
 
-          <div className="rounded-field bg-canvas p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-subtle">
-              Demo accounts · password cowrie-demo
-            </p>
-            <ul className="mt-2 space-y-1">
-              {DEMO_ROLES.map((account) => (
-                <li key={account.email}>
-                  <button
-                    type="button"
-                    onClick={() => setEmail(account.email)}
-                    className={cx(
-                      "w-full rounded px-1.5 py-1 text-left text-[11px] transition-colors hover:bg-white",
-                      email === account.email ? "text-violet-700" : "text-muted",
-                    )}
-                  >
-                    <span className="font-mono">{account.email}</span>
-                    <span className="block text-[10px] text-subtle">{account.role}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
         </form>
       </div>
     </div>

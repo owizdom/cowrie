@@ -63,9 +63,6 @@ export function GetApp({ className }: { className?: string }) {
           <ArrowDown className="h-4 w-4" />
           Download for Android
         </a>
-        <span className="mt-2 block text-[12px] text-subtle">
-          Or <Link href="/pay" className="font-medium text-violet-600 hover:underline">open in browser</Link>
-        </span>
       </span>
     );
   }
@@ -86,7 +83,6 @@ export function GetApp({ className }: { className?: string }) {
           <ArrowDown className="h-4 w-4" />
           Install CowriePay
         </button>
-        <span className="mt-2 block text-[12px] text-subtle">Installs to your home screen</span>
       </span>
     );
   }
@@ -98,9 +94,7 @@ export function GetApp({ className }: { className?: string }) {
           <ArrowDown className="h-4 w-4" />
           Install CowriePay
         </button>
-        <span className="mt-2 block text-[12px] text-subtle">
-          {hint ? "Tap Share, then Add to Home Screen" : "Add to your home screen"}
-        </span>
+        {hint ? <span className="mt-2 block text-[12px] text-subtle">Tap Share, then Add to Home Screen</span> : null}
       </span>
     );
   }
