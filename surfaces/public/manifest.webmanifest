@@ -1,0 +1,22 @@
+{
+  "name": "CowriePay — send money across Africa",
+  "short_name": "CowriePay",
+  "description": "Send money from Nigeria to Kenya in seconds, for under 1% in fees.",
+  "start_url": "/pay",
+  "scope": "/pay",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F7F7FB",
+  "theme_color": "#7C3AED",
+  "categories": ["finance"],
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Send money", "url": "/pay/send" },
+    { "name": "Transaction history", "url": "/pay/history" }
+  ]
+}

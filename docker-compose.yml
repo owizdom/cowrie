@@ -1,0 +1,48 @@
+# The two datastores named in SRS section 2.4.
+#
+# The API runs perfectly well without these - it defaults to a local SQLite file
+# so the project starts on a clean machine with nothing installed. Bring these
+# up when you want to run against the datastores the SRS actually specifies.
+#
+#   make infra
+#   export COWRIE_DATABASE_URL=postgresql+psycopg://cowrie:cowrie@localhost:5432/cowrie
+#   export COWRIE_REDIS_URL=redis://localhost:6379/0
+#   make dev
+
+services:
+  postgres:
+    # SRS 2.4: "PostgreSQL 15+"
+    image: postgres:15-alpine
+    container_name: cowrie-postgres
+    environment:
+      POSTGRES_USER: cowrie
+      POSTGRES_PASSWORD: cowrie
+      POSTGRES_DB: cowrie
+    ports:
+      - "5432:5432"
+    volumes:
+      - cowrie-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cowrie -d cowrie"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    # SRS 2.4: "Redis 7+ (cache, rate limit, queue)"
+    image: redis:7-alpine
+    container_name: cowrie-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - cowrie-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cowrie-postgres:
+  cowrie-redis:

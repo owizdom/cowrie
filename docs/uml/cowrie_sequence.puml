@@ -1,0 +1,67 @@
+@startuml Cowrie_Sequence_Transfer
+title Cowrie - Sequence Diagram: NGN to KES Cross-Border Transfer
+autonumber
+skinparam sequenceMessageAlign center
+
+actor "Sender\n(Individual)" as S
+participant "CowriePay\n(PWA)" as APP
+participant "Transfer\nService" as TS
+participant "Quote\nEngine" as QE
+participant "Sanctions\nService" as SC
+participant "Mono\n(NGN on-ramp)" as MONO
+participant "Bridge Contract\n(Base: cNGN->cUSDC)" as BR
+participant "Daraja\n(M-Pesa off-ramp)" as DAR
+participant "Notification\nService" as NS
+database "PostgreSQL\n(state + audit log)" as DB
+
+S -> APP : enter amount + corridor (NGN->KES)
+activate APP
+APP -> QE : requestQuote(NGN->KES, amount)
+activate QE
+QE --> APP : quote {fxRate, fees, recipientGets}\n(locked 60s)
+deactivate QE
+APP --> S : show itemized quote
+S -> APP : confirm with 6-digit PIN
+APP -> TS : confirmTransfer(quoteId, PIN)
+activate TS
+
+TS -> SC : screen(sender) [OFAC/UN/EU]
+activate SC
+SC --> TS : pass
+deactivate SC
+
+TS -> DB : create Transaction(state=AUTHORIZED)
+TS -> MONO : debit NGN from sender bank
+activate MONO
+MONO --> TS : NGN received (async webhook)
+deactivate MONO
+
+TS -> BR : executeBridge(cNGN -> cUSDC)
+activate BR
+BR --> TS : txHash (submitted)
+TS -> BR : await >= 12 confirmations (~24s)
+BR --> TS : finalized
+deactivate BR
+
+alt finality confirmed within SLA
+    TS -> DAR : B2C payout KES -> M-Pesa
+    activate DAR
+    DAR --> TS : M-Pesa credited (mpesaTxId)
+    deactivate DAR
+    TS -> DB : state=SETTLED + append audit log (hash-chained)
+    TS -> NS : push receipt
+    activate NS
+    NS --> S : "Transfer complete" (WebSocket)
+    deactivate NS
+else timeout > 10 min OR chain rollback
+    TS -> MONO : refund NGN to sender
+    TS -> DB : state=REFUNDED + audit log
+    TS -> NS : push refund notice
+    activate NS
+    NS --> S : "Transfer refunded"
+    deactivate NS
+end
+
+deactivate TS
+deactivate APP
+@enduml

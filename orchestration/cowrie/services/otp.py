@@ -1,0 +1,147 @@
+"""One-time codes - FR 1.1 and the second factor in FR 2.2.
+
+FR 1.1: "Sign up with a phone number and email, verified by a one-time code
+**before the account is created**."
+
+That ordering is a requirement, not a detail.  The code is issued and verified
+against a pending-registration record; the User row is only written once the
+code checks out, so an unverified phone number never becomes an account.
+
+FR 2.2: "Require a 6-digit PIN to confirm (**plus a second factor for large
+transfers**)."
+
+The same mechanism serves as the step-up factor.  Above a threshold, confirming
+a transfer needs a fresh code as well as the PIN.
+
+Delivery
+--------
+There is no SMS provider in this build, so codes are not sent anywhere - they
+are returned by the API and displayed in the UI, clearly labelled as a demo
+affordance.  Pretending to send an SMS that never arrives would make the app
+untestable.  The seam is `_deliver`, which is the single function an SMS or
+email provider would replace.
+
+Codes are stored hashed with an expiry and an attempt counter, because a
+one-time code that can be brute-forced is not a factor.
+"""
+
+from __future__ import annotations
+
+import secrets
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+
+from ..config import settings
+from ..security import hash_secret, verify_secret
+
+#: Codes are six digits, matching the PIN length users already know.
+CODE_LENGTH = 6
+TTL = timedelta(minutes=10)
+MAX_ATTEMPTS = 5
+
+#: FR 2.2 - transfers at or above this USD value need the second factor as well
+#: as the PIN.  Set at the TIER1 limit so the step-up is demonstrable with the
+#: seeded accounts rather than theoretical.
+STEP_UP_THRESHOLD_USD = 200.0
+
+
+@dataclass(slots=True)
+class Challenge:
+    purpose: str
+    """REGISTRATION | STEP_UP"""
+    identifier: str
+    """Phone number for registration, transaction id for a step-up."""
+    code_hash: str
+    expires_at: datetime
+    attempts: int = 0
+    payload: dict = field(default_factory=dict)
+    """For REGISTRATION, the account details held until the code is verified."""
+
+    def expired(self) -> bool:
+        return datetime.now(UTC) >= self.expires_at
+
+
+class OtpService:
+    """In-memory challenge store.
+
+    In-memory is correct for a single-container demo and wrong for a multi-
+    container deployment; SRS §3.3 lists Redis as the session cache and this is
+    exactly the kind of state that belongs there.  The interface below is what a
+    Redis-backed implementation would satisfy.
+    """
+
+    def __init__(self) -> None:
+        self._challenges: dict[str, Challenge] = {}
+
+    # -- issuing ------------------------------------------------------------
+    def issue(self, *, purpose: str, identifier: str, payload: dict | None = None) -> tuple[str, str]:
+        """Create a challenge.  Returns (challenge_id, code).
+
+        The plaintext code is returned to the caller because there is no SMS
+        provider; see the module docstring.
+        """
+        code = "".join(secrets.choice("0123456789") for _ in range(CODE_LENGTH))
+        challenge_id = f"otp_{secrets.token_hex(8)}"
+
+        self._challenges[challenge_id] = Challenge(
+            purpose=purpose,
+            identifier=identifier,
+            code_hash=hash_secret(code),
+            expires_at=datetime.now(UTC) + TTL,
+            payload=payload or {},
+        )
+        self._prune()
+        self._deliver(identifier=identifier, code=code, purpose=purpose)
+        return challenge_id, code
+
+    def _deliver(self, *, identifier: str, code: str, purpose: str) -> None:
+        """The SMS/email seam.
+
+        A real deployment sends `code` to `identifier` here.  This build logs it
+        and the API returns it, which is the honest behaviour when no provider
+        is configured.
+        """
+        print(f"[otp] {purpose} code for {identifier}: {code} (no SMS provider; demo build)")
+
+    # -- verifying ----------------------------------------------------------
+    def verify(self, *, challenge_id: str, code: str) -> Challenge:
+        """Consume a challenge, or raise.
+
+        Single-use: a verified challenge is removed, so a captured code cannot
+        be replayed.
+        """
+        challenge = self._challenges.get(challenge_id)
+        if challenge is None:
+            raise ValueError("This code has expired or was already used. Request a new one.")
+
+        if challenge.expired():
+            del self._challenges[challenge_id]
+            raise ValueError("This code has expired. Request a new one.")
+
+        if challenge.attempts >= MAX_ATTEMPTS:
+            del self._challenges[challenge_id]
+            raise ValueError("Too many incorrect attempts. Request a new code.")
+
+        if not verify_secret(code, challenge.code_hash):
+            challenge.attempts += 1
+            remaining = MAX_ATTEMPTS - challenge.attempts
+            raise ValueError(f"Incorrect code. {remaining} attempt{'s' if remaining != 1 else ''} left.")
+
+        del self._challenges[challenge_id]
+        return challenge
+
+    def peek(self, challenge_id: str) -> Challenge | None:
+        return self._challenges.get(challenge_id)
+
+    def _prune(self) -> None:
+        for key in [k for k, v in self._challenges.items() if v.expired()]:
+            del self._challenges[key]
+
+
+def requires_step_up(source_amount_ngn: float | int) -> bool:
+    """FR 2.2 - is this large enough to need a second factor?"""
+    usd = float(source_amount_ngn) / settings.mid_market_ngn_per_usd
+    return usd >= STEP_UP_THRESHOLD_USD
+
+
+service = OtpService()

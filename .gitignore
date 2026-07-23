@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Demo database
+cowrie-demo.db
+cowrie-demo.db-wal
+cowrie-demo.db-shm
+*.sqlite3
+
+# Environment
+.env
+.env.local
+
+# Foundry
+cusdc/out/
+cusdc/cache/
+cusdc/broadcast/
+cusdc/lib/
+cusdc/deployments/local.json
+
+# Node / surfaces
+node_modules/
+.next/
+out/
+build/
+.vercel/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local deploy artefacts
+android/*.apk
+android/*.keystore
+android/app/

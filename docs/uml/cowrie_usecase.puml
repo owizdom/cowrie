@@ -1,0 +1,102 @@
+@startuml Cowrie_UseCase
+left to right direction
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+title Cowrie - Use Case Diagram (Launch Corridor: NGN to KES)
+
+' ---------- Primary (human) actors ----------
+actor "Individual\n(CowriePay user)" as User
+actor "Institution /\nAPI Consumer" as Inst
+actor "Cowrie Admin\n(Support/Reviewer/Officer/Engineer)" as Admin
+actor "Regulator\n(SEC / CMA / CBN)" as Reg
+
+' ---------- Secondary (external system) actors ----------
+actor "Mono\n(NGN on-ramp)" as Mono
+actor "Safaricom Daraja\n(M-Pesa off-ramp)" as Daraja
+actor "Smile ID\n(KYC)" as Smile
+actor "cUSDC Banking\nPartner" as Bank
+actor "Base Network\n(settlement)" as Base
+
+rectangle "Cowrie Platform" {
+
+  ' --- Onboarding & KYC (FR1) ---
+  usecase "Register account" as UC_Reg
+  usecase "Verify identity (KYC)" as UC_KYC
+  usecase "Screen against sanctions\n(OFAC / UN / EU)" as UC_Sanc
+
+  ' --- Send Money / CowriePay (FR2) ---
+  usecase "Request transparent quote" as UC_Quote
+  usecase "Initiate & confirm transfer\n(6-digit PIN)" as UC_Send
+  usecase "Receive to M-Pesa" as UC_Recv
+  usecase "Cancel & refund\nstuck transfer" as UC_Refund
+  usecase "View history /\nexport statement" as UC_Hist
+  usecase "Create support ticket" as UC_Ticket
+
+  ' --- Settlement & cUSDC (FR3) ---
+  usecase "Execute atomic\nbridge settlement" as UC_Bridge
+  usecase "Mint cUSDC\n(reserve-attested)" as UC_Mint
+  usecase "Burn cUSDC\n(redemption)" as UC_Burn
+  usecase "Publish reserve\nattestation" as UC_Att
+
+  ' --- Cowrie API / Institutional (FR4) ---
+  usecase "Authenticate via API key" as UC_ApiAuth
+  usecase "Create payment intent" as UC_Intent
+  usecase "Receive signed webhooks" as UC_Webhook
+  usecase "Analyze transaction stats" as UC_Stats
+
+  ' --- Admin & Compliance Console (FR5) ---
+  usecase "Monitor transactions" as UC_Monitor
+  usecase "Review KYC &\nresolve disputes" as UC_Review
+  usecase "Export regulator report" as UC_Export
+  usecase "View cUSDC\nreserve dashboard" as UC_Dash
+}
+
+' ----- Individual associations -----
+User --> UC_Reg
+User --> UC_KYC
+User --> UC_Quote
+User --> UC_Send
+User --> UC_Recv
+User --> UC_Refund
+User --> UC_Hist
+User --> UC_Ticket
+
+' ----- Institution associations -----
+Inst --> UC_ApiAuth
+Inst --> UC_Intent
+Inst --> UC_Webhook
+Inst --> UC_Stats
+
+' ----- Admin associations -----
+Admin --> UC_Monitor
+Admin --> UC_Review
+Admin --> UC_Export
+Admin --> UC_Dash
+Admin --> UC_Mint
+Admin --> UC_Burn
+
+' ----- Regulator associations -----
+Reg --> UC_Export
+Reg --> UC_Dash
+Reg --> UC_Att
+
+' ----- include / extend relationships -----
+UC_Reg ..> UC_KYC : <<include>>
+UC_KYC ..> UC_Sanc : <<include>>
+UC_Send ..> UC_Quote : <<include>>
+UC_Send ..> UC_Sanc : <<include>>
+UC_Send ..> UC_Bridge : <<include>>
+UC_Bridge ..> UC_Recv : <<include>>
+UC_Refund ..> UC_Send : <<extend>>
+UC_Intent ..> UC_ApiAuth : <<include>>
+UC_Intent ..> UC_Bridge : <<include>>
+UC_Mint ..> UC_Att : <<include>>
+
+' ----- external system participation -----
+UC_KYC --> Smile
+UC_Send --> Mono
+UC_Recv --> Daraja
+UC_Bridge --> Base
+UC_Mint --> Bank
+UC_Burn --> Bank
+@enduml

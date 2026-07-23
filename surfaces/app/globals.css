@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Cowrie global styles.
+ *
+ * Browser support target is SRS 2.4: Chromium 110+, Safari 15+, Android 8.0+,
+ * iOS 14.0+. That rules out :has(), container queries and nesting, so nothing
+ * below uses them. Everything here works on Safari 15.
+ */
+
+@layer base {
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* NFR 7: every interactive element must show where focus is. A visible ring
+     on :focus-visible only, so pointer users do not see it but keyboard users
+     always do. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-violet-600 ring-offset-2 ring-offset-white;
+  }
+
+  /* Money, counters and identifiers line up in columns when the digits are all
+     the same width. Applied wherever figures are compared vertically. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  ::selection {
+    @apply bg-violet-200 text-violet-900;
+  }
+
+  /* Respect a user's reduced-motion preference. The confirmation counter and
+     live feed still update - only the decoration stops. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Content that is only for screen readers - used for the live region that
+     announces transfer state changes, and for labels the design shows as an
+     icon alone. */
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  .card {
+    @apply bg-surface border border-line rounded-card shadow-card;
+  }
+
+  .panel {
+    @apply bg-surface border border-line rounded-panel shadow-card;
+  }
+
+  /* Uppercase section label: TOTAL BALANCE, FROM, RECIPIENT, YOU SEND */
+  .eyebrow {
+    @apply text-label uppercase text-subtle;
+  }
+
+  .divider {
+    @apply border-t border-line;
+  }
+
+  /* Thin scrollbars inside tables and code blocks, where a full-width native
+     bar would crowd the content. */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #DEDEE7 transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background-color: #DEDEE7;
+    border-radius: 999px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  /* Wide tables must scroll inside their own container. The page body never
+     scrolls sideways. */
+  .table-scroll {
+    @apply overflow-x-auto scroll-thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .grid-lines {
+    background-image:
+      linear-gradient(to right, rgba(23, 21, 29, 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(23, 21, 29, 0.035) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+}

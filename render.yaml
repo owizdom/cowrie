@@ -1,0 +1,57 @@
+# Cowrie — Render blueprint.
+#
+# Deploys the whole system: the Python orchestration tier, the Next.js surfaces,
+# and a managed PostgreSQL 15 instance (the datastore SRS 2.4 specifies).
+#
+# The web service is the public URL. It proxies /api/* to the orchestration
+# service, so the browser only ever talks to one origin and there is no CORS.
+
+databases:
+  - name: cowrie-db
+    databaseName: cowrie
+    user: cowrie
+    plan: free
+    postgresMajorVersion: "15"
+
+services:
+  # ---- orchestration tier (FastAPI) ------------------------------------
+  - type: web
+    name: cowrie-api
+    runtime: python
+    plan: free
+    rootDir: orchestration
+    buildCommand: pip install -e .
+    startCommand: uvicorn cowrie.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: COWRIE_DATABASE_URL
+        fromDatabase:
+          name: cowrie-db
+          property: connectionString
+      - key: COWRIE_JWT_SECRET
+        generateValue: true
+      - key: COWRIE_SEED_ON_STARTUP
+        value: "true"
+      - key: COWRIE_CHAIN_MODE
+        value: simulated
+      - key: COWRIE_ENVIRONMENT
+        value: demo
+
+  # ---- surfaces (Next.js) — the public URL -----------------------------
+  - type: web
+    name: cowrie
+    runtime: node
+    plan: free
+    rootDir: surfaces
+    buildCommand: npm ci && npm run build
+    startCommand: npm start -- --port $PORT
+    envVars:
+      - key: NODE_VERSION
+        value: "20.18.1"
+      - key: COWRIE_API_URL
+        fromService:
+          type: web
+          name: cowrie-api
+          property: hostport

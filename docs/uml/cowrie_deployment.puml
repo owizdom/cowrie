@@ -1,0 +1,58 @@
+@startuml Cowrie_Deployment
+title Cowrie - Deployment Diagram (Launch Topology)
+skinparam componentStyle uml2
+
+node "Sender / Recipient Device\n(Android 8+ / iOS 14+ / Browser)" as Device {
+  artifact "CowriePay\n(React Native 0.74 PWA)" as APP
+}
+
+node "Admin / Regulator Workstation\n(Chrome 110+ / Safari 15+)" as Web {
+  artifact "Admin Console (RBAC)" as ADM
+  artifact "Regulator Portal" as RP
+}
+
+cloud "Railway (Python 3.12 Containers)" as Railway {
+  node "Orchestration Services" as Orch {
+    artifact "Auth / Transfer / Quote / FX" as Svc1
+    artifact "KYC / Sanctions / Reserve Mgr" as Svc2
+    artifact "Webhook / Audit / Notification" as Svc3
+  }
+  database "PostgreSQL 15\n(off-chain state + audit log)" as PG
+  database "Redis 7\n(cache / rate limit / queue)" as RD
+}
+
+node "HSM\n(tamper-resistant signing)" as HSM
+
+cloud "Base Network (L2)" as Base {
+  artifact "cUSDC (ERC-20)" as CUSDC
+  artifact "cNGN (ERC-20)" as CNGN
+  artifact "Bridge Contract" as BRG
+  artifact "Safe 3-of-5 Multisig" as SAFE
+}
+
+cloud "External Partners" as Ext {
+  node "Mono\n(NGN on-ramp)" as Mono
+  node "Safaricom Daraja\n(M-Pesa off-ramp)" as Daraja
+  node "Smile ID\n(KYC)" as Smile
+  node "cUSDC Banking Partner\n(USD reserves)" as Bank
+  node "Alchemy + Infura\n(Base RPC)" as RPC
+}
+
+' ---- communication links ----
+APP -- Orch : HTTPS REST + WebSocket\n(TLS 1.3)
+ADM -- Orch : HTTPS (RBAC)
+RP -- Orch : HTTPS (read-only export)
+Orch -- PG : SQL over TLS
+Orch -- RD : RESP over TLS
+Orch -- HSM : sign tx
+Orch -- Mono : REST + OAuth + webhooks
+Orch -- Daraja : OAuth 2.0 REST
+Orch -- Smile : SDK key + signed callback
+Orch -- Bank : encrypted REST
+Orch -- RPC : JSON-RPC 2.0 (HTTPS+WSS)
+RPC -- Base : submit / subscribe
+SAFE ..> CUSDC : governs mint/burn
+SAFE ..> BRG : governs upgrade
+BRG ..> CUSDC : converts
+BRG ..> CNGN : converts
+@enduml

@@ -1,0 +1,200 @@
+@startuml Cowrie_ClassDiagram
+title Cowrie - Class Diagram: Domain Model
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+hide circle
+
+abstract class AuditableEntity {
+  +id : UUID
+  +createdAt : Timestamp
+}
+
+class User {
+  +phone : Text {unique}
+  +email : Text {unique}
+  +country : Char(2)
+  +kycLevel : KycLevel
+  --
+  +register() : void
+  +verifyIdentity(doc) : KycSubmission
+  +raiseLimit() : void
+}
+
+class KycSubmission {
+  +provider : Text
+  +status : KycStatus
+  +idType : KycIdType
+  -idNumberEncrypted : Bytea
+  +decidedAt : Timestamp
+  --
+  +approve() : void
+  +reject() : void
+  +freeze() : void
+}
+
+class Transaction {
+  +fxRate : Decimal
+  +state : TransactionState
+  +settledAt : Timestamp
+  --
+  +quote() : void
+  +authorize(pin) : void
+  +bridge() : OnchainRecord
+  +settle() : void
+  +refund() : void
+  +isStuck() : bool
+}
+
+class OnchainRecord {
+  +txHash : Text
+  +blockNumber : BigInt
+  +confirmations : Int
+  +contractAddress : Text
+  --
+  +isFinal() : bool
+}
+
+class ApiKey {
+  +partnerId : UUID
+  -keyHash : Bytea
+  +scopes : Text
+  +revokedAt : Timestamp
+  --
+  +authenticate(req) : bool
+  +rotate() : void
+  +revoke() : void
+}
+
+class PaymentIntent {
+  +idempotencyKey : Text
+  +status : IntentStatus
+  --
+  +process() : Transaction
+}
+
+class CusdcReserve {
+  +attestationDate : Date
+  +usdBalance : Decimal
+  +cusdcSupply : Decimal
+  +attestor : Text
+  --
+  +coverageRatio() : Decimal
+  +isFullyBacked() : bool
+}
+
+class Webhook {
+  +partnerId : UUID
+  +url : Text
+  -secretHash : Bytea
+  +status : WebhookStatus
+  --
+  +deliver(event) : void
+  +retry() : void
+}
+
+class Money <<value object>> {
+  +amount : Decimal
+  +currency : Char(3)
+}
+
+class FeeBreakdown <<value object>> {
+  +fxSpread : Decimal
+  +networkGas : Decimal
+  +liquiditySpread : Decimal
+  +cowrieFee : Decimal
+  --
+  +total() : Decimal
+}
+
+class AuditLogEntry <<log>> {
+  +entityType : Text
+  +actor : ActorType
+  +action : Text
+  -beforeHash : Bytea
+  -afterHash : Bytea
+  -prevLogHash : Bytea
+  +ts : Timestamp
+  --
+  +verifyChain() : bool
+}
+
+package Enumerations {
+  enum KycLevel {
+    NONE
+    TIER1
+    TIER2
+    TIER3
+  }
+  enum KycStatus {
+    PENDING
+    APPROVED
+    REJECTED
+    FROZEN
+  }
+  enum KycIdType {
+    NIN
+    BVN
+    KENYAN_ID
+    NIDA
+    GHANA_CARD
+  }
+  enum TransactionState {
+    CREATED
+    QUOTED
+    AUTHORIZED
+    ONRAMP_PENDING
+    BRIDGING
+    OFFRAMP_PENDING
+    SETTLED
+    REFUNDING
+    REFUNDED
+    FAILED
+  }
+  enum IntentStatus {
+    CREATED
+    PROCESSING
+    SETTLED
+    FAILED
+  }
+  enum WebhookStatus {
+    ACTIVE
+    PAUSED
+    REVOKED
+  }
+  enum ActorType {
+    USER
+    ADMIN
+    SYSTEM
+    REGULATOR
+  }
+}
+
+' ---- generalization ----
+AuditableEntity <|-- User
+AuditableEntity <|-- KycSubmission
+AuditableEntity <|-- Transaction
+AuditableEntity <|-- ApiKey
+AuditableEntity <|-- PaymentIntent
+AuditableEntity <|-- CusdcReserve
+AuditableEntity <|-- Webhook
+
+' ---- associations / composition / aggregation ----
+User "1" *-- "0..*" KycSubmission : files >
+User "1" o-- "0..*" Transaction : initiates >
+ApiKey "1" o-- "0..*" PaymentIntent : issues >
+PaymentIntent "1" --> "0..1" Transaction : produces >
+Transaction "1" *-- "0..1" OnchainRecord : anchored by >
+Transaction "1" *-- "1" Money : source >
+Transaction "1" *-- "1" Money : destination >
+Transaction "1" *-- "1" FeeBreakdown : itemizes >
+AuditLogEntry "0..*" ..> AuditableEntity : records >
+
+' ---- enum usage ----
+User ..> KycLevel
+KycSubmission ..> KycStatus
+KycSubmission ..> KycIdType
+Transaction ..> TransactionState
+PaymentIntent ..> IntentStatus
+Webhook ..> WebhookStatus
+AuditLogEntry ..> ActorType
+@enduml

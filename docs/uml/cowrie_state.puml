@@ -1,0 +1,29 @@
+@startuml Cowrie_StateMachine
+title Cowrie - State Machine Diagram: Transaction Lifecycle
+
+[*] --> Created : sender starts transfer
+Created --> Quoted : request quote (rate locked 60s)
+Quoted --> Cancelled : quote expires (> 60s)
+Quoted --> Authorized : confirm PIN /\nsanctions pass
+Authorized --> OnRampPending : debit NGN via Mono
+OnRampPending --> Bridging : NGN received /\nbridge cNGN -> cUSDC
+Bridging --> OffRampPending : >= 12 confirmations (~24s)
+OffRampPending --> Settled : M-Pesa credited (Daraja)
+Settled --> [*]
+
+' ---- failure / refund paths ----
+Authorized --> Failed : sanctions hold / Mono error
+OnRampPending --> Refunding : timeout > 10 min
+Bridging --> Refunding : chain rollback
+OffRampPending --> Refunding : payout failed / timeout
+Refunding --> Refunded : NGN returned to sender
+Refunded --> [*]
+Failed --> [*]
+Cancelled --> [*]
+
+note right of Refunding
+  NFR 3 (Reliability): every transfer
+  either completes or auto-refunds
+  within 10 minutes
+end note
+@enduml

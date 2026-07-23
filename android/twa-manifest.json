@@ -1,0 +1,23 @@
+{
+  "packageId": "fun.cowrie.pay",
+  "host": "REPLACE_WITH_DEPLOYED_HOST",
+  "name": "CowriePay",
+  "launcherName": "CowriePay",
+  "display": "standalone",
+  "themeColor": "#7C3AED",
+  "navigationColor": "#7C3AED",
+  "backgroundColor": "#F7F7FB",
+  "startUrl": "/pay",
+  "iconUrl": "https://REPLACE_WITH_DEPLOYED_HOST/icon-512.png",
+  "maskableIconUrl": "https://REPLACE_WITH_DEPLOYED_HOST/icon-maskable.png",
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    { "name": "Send money", "url": "/pay/send" },
+    { "name": "History", "url": "/pay/history" }
+  ],
+  "orientation": "portrait",
+  "enableNotifications": false,
+  "fallbackType": "customtabs",
+  "features": {}
+}
