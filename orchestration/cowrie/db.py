@@ -56,12 +56,53 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 
 def init_db() -> None:
-    """Create the schema.
-
-    A demo build has no migration history worth keeping, so the schema is
-    created directly from the models rather than through Alembic.
-    """
+    """Create the schema, then reconcile columns added since it was created."""
     Base.metadata.create_all(bind=engine)
+    _sync_columns()
+
+
+def _sync_columns() -> None:
+    """Add columns the models declare but the live tables lack.
+
+    `create_all` creates missing *tables* and silently ignores existing ones, so
+    a column added to a model after the first deployment never reaches the
+    database and every insert fails with UndefinedColumn. That is exactly what
+    happened when the 90-day expiry was added to ApiKey.
+
+    This is deliberately narrow: it only ever ADDs nullable columns. It will not
+    drop, rename or retype anything, because those need a decision about
+    existing rows that no automatic step should make on its own. A project that
+    outgrows this wants Alembic; this keeps a single-service deployment honest
+    without pretending to be a migration tool.
+    """
+    from sqlalchemy import inspect, text
+    from sqlalchemy.schema import CreateColumn
+
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    with engine.begin() as connection:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+
+            present = {col["name"] for col in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in present:
+                    continue
+                if not column.nullable and column.default is None and column.server_default is None:
+                    print(
+                        f"[schema] {table.name}.{column.name} is NOT NULL without a default; "
+                        "add it by hand"
+                    )
+                    continue
+
+                ddl = CreateColumn(column).compile(engine).string
+                # A new column has to be nullable for existing rows to remain
+                # valid; the model default applies to rows written from now on.
+                ddl = ddl.replace(" NOT NULL", "")
+                connection.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN {ddl}'))
+                print(f"[schema] added {table.name}.{column.name}")
 
 
 def get_session() -> Iterator[Session]:
