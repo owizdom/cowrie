@@ -106,8 +106,25 @@ def _classify(request: Request) -> tuple[Tier, str]:
     if auth.startswith("Bearer "):
         return SESSION_TIER, f"session:{auth[7:39]}"
 
-    client = request.client.host if request.client else "unknown"
-    return ANON_TIER, f"anon:{client}"
+    return ANON_TIER, f"anon:{_client_ip(request)}"
+
+
+def _client_ip(request: Request) -> str:
+    """The caller's address, as seen from behind a proxy.
+
+    `request.client.host` is the last hop, which on a platform host is an
+    internal router that varies between requests - so keying on it hands each
+    request its own bucket and the limit never engages. The left-most entry of
+    X-Forwarded-For is the original client.
+
+    This trusts the header, which is only safe because the service is reachable
+    exclusively through the platform edge, and that edge overwrites it. Exposed
+    directly, a caller could forge the header and mint unlimited buckets.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
