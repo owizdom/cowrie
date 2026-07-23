@@ -551,7 +551,7 @@ class TestRegistration:
 
         response = client.post(
             "/auth/register/verify",
-            json={"challengeId": start["challengeId"], "code": start["demoCode"]},
+            json={"challengeId": start["challengeId"], "code": start["code"]},
         )
         assert response.status_code == 201
         assert response.json()["user"]["phone"] == "+2348099999998"
@@ -580,7 +580,7 @@ class TestRegistration:
             },
         ).json()
 
-        payload = {"challengeId": start["challengeId"], "code": start["demoCode"]}
+        payload = {"challengeId": start["challengeId"], "code": start["code"]}
         assert client.post("/auth/register/verify", json=payload).status_code == 201
         assert client.post("/auth/register/verify", json=payload).status_code == 400
 

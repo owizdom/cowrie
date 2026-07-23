@@ -12,15 +12,18 @@ import { api, clearToken, getToken, setToken } from "@/lib/api";
 import { groupDigits, relativeTime, truncateHash } from "@/lib/format";
 
 const REGULATORS = [
-  { code: "SEC_NIGERIA", name: "SEC Nigeria", codeHint: "sec-ng-demo" },
-  { code: "CMA_KENYA", name: "CMA Kenya", codeHint: "cma-ke-demo" },
-  { code: "CBN", name: "Central Bank of Nigeria", codeHint: "cbn-demo" },
+  { code: "SEC_NIGERIA", name: "SEC Nigeria" },
+  { code: "CMA_KENYA", name: "CMA Kenya" },
+  { code: "CBN", name: "Central Bank of Nigeria" },
 ];
 
 export default function RegulatorPage() {
   const [signedIn, setSignedIn] = useState(false);
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [regulator, setRegulator] = useState("SEC_NIGERIA");
-  const [accessCode, setAccessCode] = useState("sec-ng-demo");
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const [profile, setProfile] = useState<{ name?: string; interest?: string } | null>(null);
   const [reserve, setReserve] = useState<{ cusdcSupply: string; usdReserve: string; coveragePercent: string; isFullyBacked: boolean } | null>(null);
@@ -46,25 +49,94 @@ export default function RegulatorPage() {
 
   if (!signedIn) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-canvas grid-lines px-4">
-        <form className="panel w-full max-w-[380px] space-y-4 p-6" onSubmit={async (e) => {
-          e.preventDefault(); setBusy(true); setError("");
-          try {
-            const result = await api<{ token: string }>("/auth/regulator/login", { method: "POST", body: { regulator, accessCode } });
-            setToken("regulator", result.token); setSignedIn(true);
-          } catch (err) { setError(err instanceof Error ? err.message : "Invalid access code."); setBusy(false); }
-        }}>
-          <div className="flex items-center gap-2.5"><CowrieMark className="h-6 w-6 text-violet-600" /><span className="text-[15px] font-semibold text-heading">Cowrie Regulator Portal</span></div>
-          <p className="text-[13px] text-muted">Read-only access.</p>
-          <label className="block"><span className="mb-1 block text-[13px] font-medium text-ink">Regulator</span>
-            <select value={regulator} onChange={(e) => { setRegulator(e.target.value); setAccessCode(REGULATORS.find((r) => r.code === e.target.value)?.codeHint ?? ""); }} className={inputClass}>
-              {REGULATORS.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
-            </select></label>
-          <label className="block"><span className="mb-1 block text-[13px] font-medium text-ink">Access code</span>
-            <input value={accessCode} onChange={(e) => setAccessCode(e.target.value)} className={cx(inputClass, "font-mono")} /></label>
+      <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
+        <form
+          className="w-full max-w-[360px] space-y-5"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            setError("");
+            try {
+              const path = mode === "signin" ? "/auth/regulator/login" : "/auth/regulator/register";
+              const body =
+                mode === "signin"
+                  ? { email, password }
+                  : { fullName, email, password, regulator };
+              const result = await api<{ token: string }>(path, { method: "POST", body });
+              setToken("regulator", result.token);
+              setSignedIn(true);
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Could not sign in.");
+              setBusy(false);
+            }
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <CowrieMark className="h-6 w-6 text-violet-600" />
+            <span className="text-[15px] font-semibold tracking-tight text-heading">
+              Cowrie Regulator Portal
+            </span>
+          </div>
+
+          <h1 className="text-lg font-bold text-heading">
+            {mode === "signin" ? "Sign in" : "Request access"}
+          </h1>
+
+          {mode === "signup" ? (
+            <>
+              <label className="block">
+                <span className="mb-1.5 block text-[13px] font-medium text-ink">Full name</span>
+                <input value={fullName} onChange={(e) => setFullName(e.target.value)} autoComplete="name" required minLength={2} className={inputClass} />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-[13px] font-medium text-ink">Regulator</span>
+                <select value={regulator} onChange={(e) => setRegulator(e.target.value)} className={inputClass}>
+                  {REGULATORS.map((r) => (
+                    <option key={r.code} value={r.code}>{r.name}</option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : null}
+
+          <label className="block">
+            <span className="mb-1.5 block text-[13px] font-medium text-ink">Email</span>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required className={inputClass} />
+          </label>
+
+          <label className="block">
+            <span className="mb-1.5 block text-[13px] font-medium text-ink">Password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              required
+              minLength={8}
+              className={inputClass}
+            />
+          </label>
+
           {error ? <ErrorText>{error}</ErrorText> : null}
-          <Button type="submit" full loading={busy}>Sign in</Button>
-          <Link href="/regulator/guide" className="block text-center text-[12px] font-semibold text-violet-600">Read the integration guide first →</Link>
+
+          <Button type="submit" full loading={busy}>
+            {mode === "signin" ? "Sign in" : "Create account"}
+          </Button>
+
+          <p className="text-center text-[13px] text-muted">
+            {mode === "signin" ? "No account yet? " : "Already registered? "}
+            <button
+              type="button"
+              onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(""); }}
+              className="font-semibold text-violet-600"
+            >
+              {mode === "signin" ? "Request access" : "Sign in"}
+            </button>
+          </p>
+
+          <Link href="/regulator/guide" className="block text-center text-[12px] text-subtle hover:text-muted">
+            Integration guide
+          </Link>
         </form>
       </div>
     );

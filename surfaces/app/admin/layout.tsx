@@ -145,14 +145,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 // sign in
 // ---------------------------------------------------------------------------
 
-const ACCOUNTS = [
-  { email: "amara@cowrie.demo", role: "Admin" },
-  { email: "kwame@cowrie.demo", role: "Officer" },
-  { email: "zainab@cowrie.demo", role: "Reviewer" },
-  { email: "david@cowrie.demo", role: "Engineer" },
-  { email: "blessing@cowrie.demo", role: "Support" },
-];
-
 function AdminLogin({ onSignedIn }: { onSignedIn: (a: Admin) => void }) {
   const [email, setEmail] = useState("amara@cowrie.demo");
   const [password, setPassword] = useState("cowrie-demo");
@@ -225,25 +217,6 @@ function AdminLogin({ onSignedIn }: { onSignedIn: (a: Admin) => void }) {
           <Button type="submit" full loading={busy}>
             Sign in
           </Button>
-
-          <div className="border-t border-line pt-3">
-            <p className="text-[11px] text-subtle">Password for all: cowrie-demo</p>
-            <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
-              {ACCOUNTS.map((account) => (
-                <button
-                  key={account.email}
-                  type="button"
-                  onClick={() => setEmail(account.email)}
-                  className={cx(
-                    "text-[11px] font-medium transition-colors",
-                    email === account.email ? "text-violet-600" : "text-muted hover:text-ink",
-                  )}
-                >
-                  {account.role}
-                </button>
-              ))}
-            </div>
-          </div>
 
         </form>
       </div>

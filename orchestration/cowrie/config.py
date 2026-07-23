@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     limiter and a job queue here (SRS 3.3); none of those need to be durable for
     a demo, so its absence degrades rather than breaks."""
 
+    # ---- one-time code delivery (FR 1.1) ---------------------------------
+    smtp_host: str = ""
+    """Empty means the code is shown on screen instead of emailed.
+
+    FR 1.1 asks for a code, not for a channel. Email is the channel that can be
+    delivered without a paid account; set these four values and codes are sent
+    for real. Gmail works with an app password."""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "Cowrie <no-reply@cowrie.africa>"
+
     # ---- security --------------------------------------------------------
     jwt_secret: str = "cowrie-demo-secret-not-for-production"
     jwt_algorithm: str = "HS256"
@@ -112,6 +124,15 @@ class Settings(BaseSettings):
     suite raises this so the suite does not take minutes."""
 
     seed_on_startup: bool = True
+    """Provision the operating essentials only.
+
+    Two things are written at first boot and nothing else: the Cowrie console
+    operators (SRS 2.3 - these are Cowrie staff, provisioned rather than
+    self-registered) and the sanctions lists FR 1.3 screens against, which are
+    reference data the system cannot function without.
+
+    No sample transactions, users, KYC submissions, disputes, partner keys or
+    reserve history. Every one of those arrives through the product."""
 
     cors_origins: list[str] = [
         "http://localhost:3000",

@@ -249,7 +249,7 @@ export type Transfer = {
   secondsInState: number;
   costPercent: string;
   onchain: OnchainRecord | null;
-  stepUp?: { required: boolean; challengeId?: string; reason?: string; demoCode?: string };
+  stepUp?: { required: boolean; challengeId?: string; reason?: string; code?: string };
   quoteExpiresAt?: string;
   secondsRemaining?: number;
 };

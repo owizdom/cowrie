@@ -1,7 +1,7 @@
 "use client";
 /** Developers — overview. Volume, settlement and cost for this partner (FR 4, "Analyze transaction stats"). */
 import { useEffect, useState } from "react";
-import { Card, Skeleton, cx } from "@/components/ui";
+import { Skeleton, cx } from "@/components/ui";
 import { api } from "@/lib/api";
 import { groupDigits } from "@/lib/format";
 import { usePortal } from "./portal-context";
@@ -36,14 +36,6 @@ export default function OverviewPage() {
         <Figure label="Median settlement" value={stats ? `${stats.settlement.medianSeconds}s` : null} accent />
       </dl>
 
-      <Card className="mt-10 p-5">
-        <p className="text-[13px] font-semibold text-heading">Base URL</p>
-        <code className="mt-1.5 block font-mono text-[12px] text-muted">/v1</code>
-        <p className="mt-4 text-[12px] text-muted">
-          Authenticate with <code className="font-mono">X-API-Key</code>. Every write needs an{" "}
-          <code className="font-mono">Idempotency-Key</code>.
-        </p>
-      </Card>
     </div>
   );
 }

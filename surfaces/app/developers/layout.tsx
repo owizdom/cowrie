@@ -34,8 +34,29 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
   const [error, setError] = useState("");
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [org, setOrg] = useState("");
+  const [orgName, setOrgName] = useState("");
   const [orgEmail, setOrgEmail] = useState("");
   const [issued, setIssued] = useState<{ secretKey: string; publishableKey: string } | null>(null);
+
+  /** Who this key actually belongs to, read from the API rather than assumed. */
+  const [profile, setProfile] = useState<{ partner: string; contactName: string } | null>(null);
+
+  useEffect(() => {
+    if (!apiKey) {
+      setProfile(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const stats = await api<{ partner: string; contactName: string }>("/v1/stats?days=1", {
+          apiKey,
+        });
+        setProfile({ partner: stats.partner, contactName: stats.contactName });
+      } catch {
+        setProfile(null);
+      }
+    })();
+  }, [apiKey]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(STORE);
@@ -106,7 +127,10 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
               } else {
                 const result = await api<{ secretKey: string; publishableKey: string }>(
                   "/v1/partners",
-                  { method: "POST", body: { organisation: org, email: orgEmail } },
+                  {
+                    method: "POST",
+                    body: { organisation: org, fullName: orgName, email: orgEmail },
+                  },
                 );
                 setIssued(result);
               }
@@ -143,12 +167,23 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
           ) : (
             <>
               <label className="block">
+                <span className="mb-1.5 block text-[13px] font-medium text-ink">Your name</span>
+                <input
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  autoComplete="name"
+                  required
+                  minLength={2}
+                  className={inputClass}
+                />
+              </label>
+              <label className="block">
                 <span className="mb-1.5 block text-[13px] font-medium text-ink">Organisation</span>
                 <input value={org} onChange={(e) => setOrg(e.target.value)} required minLength={2} className={inputClass} />
               </label>
               <label className="block">
                 <span className="mb-1.5 block text-[13px] font-medium text-ink">Work email</span>
-                <input type="email" value={orgEmail} onChange={(e) => setOrgEmail(e.target.value)} required className={inputClass} />
+                <input type="email" value={orgEmail} onChange={(e) => setOrgEmail(e.target.value)} autoComplete="email" required className={inputClass} />
               </label>
             </>
           )}
@@ -159,7 +194,11 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
             type="submit"
             full
             loading={busy}
-            disabled={mode === "signin" ? !draft.trim() : !org.trim() || !orgEmail.trim()}
+            disabled={
+              mode === "signin"
+                ? !draft.trim()
+                : !org.trim() || !orgName.trim() || !orgEmail.trim()
+            }
           >
             {mode === "signin" ? "Continue" : "Create account"}
           </Button>
@@ -186,7 +225,16 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
         searchPlaceholder="Search endpoints, request IDs..."
         nav={NAV}
         environment={{ label: "Sandbox", tone: "sandbox" }}
-        user={{ name: "Adunni Pay", role: "Partner", initials: "AP" }}
+        user={{
+          name: profile?.contactName || profile?.partner || "Partner",
+          role: profile?.partner ?? "",
+          initials: (profile?.contactName || profile?.partner || "P")
+            .split(/\s+/)
+            .map((part) => part[0])
+            .slice(0, 2)
+            .join("")
+            .toUpperCase(),
+        }}
         footer={
           <div className="space-y-2">
             <SystemStatus label="All systems normal" />

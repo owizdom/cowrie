@@ -85,8 +85,23 @@ class AdminLogin(BaseModel):
 
 
 class RegulatorLogin(BaseModel):
-    accessCode: str
-    regulator: str = "SEC_NIGERIA"
+    email: EmailStr
+    password: str
+
+
+class RegulatorSignup(BaseModel):
+    fullName: str = Field(min_length=2, max_length=160)
+    email: EmailStr
+    regulator: str = Field(default="SEC_NIGERIA")
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("regulator")
+    @classmethod
+    def _known_body(cls, v: str) -> str:
+        allowed = {"SEC_NIGERIA", "CMA_KENYA", "CBN"}
+        if v not in allowed:
+            raise ValueError(f"regulator must be one of {sorted(allowed)}")
+        return v
 
 
 def _session_payload(user: User, token: str) -> dict:
@@ -122,21 +137,28 @@ def register_start(body: RegisterStart, db: Session = Depends(get_session)) -> d
     if existing:
         raise HTTPException(status.HTTP_409_CONFLICT, "An account already exists for that phone or email.")
 
-    challenge_id, code = otp_service.issue(
+    challenge_id, code, delivered = otp_service.issue(
         purpose="REGISTRATION",
         identifier=body.phone,
         payload=body.model_dump(),
+        email=body.email,
     )
 
-    return {
+    response = {
         "challengeId": challenge_id,
-        "sentTo": body.phone,
-        "message": "Enter the 6-digit code to finish creating your account.",
-        # No SMS provider is configured, so the code is returned rather than
-        # sent.  See services/otp.py.
-        "demoCode": code,
-        "demoNote": "Returned only because this build has no SMS provider wired.",
+        "sentTo": body.email if delivered else body.phone,
+        "delivered": delivered,
+        "message": (
+            f"We sent a 6-digit code to {body.email}."
+            if delivered
+            else "Enter the 6-digit code to finish creating your account."
+        ),
     }
+    # Only surfaced when nothing was actually sent - otherwise a code that never
+    # arrives would make sign-up impossible.
+    if not delivered:
+        response["code"] = code
+    return response
 
 
 @router.post("/register/verify", status_code=status.HTTP_201_CREATED)
@@ -159,9 +181,9 @@ def register_verify(body: RegisterVerify, db: Session = Depends(get_session)) ->
         email=details["email"],
         country=details["country"],
         kycLevel=KycLevel.TIER1,  # phone + email verified
-        ngnBalance=Decimal("750000.00"),  # seeded demo balance
-        bankName="Guaranty Trust Bank",
-        bankAccountMasked="******4417",
+        # A new account holds nothing. Funds arrive by linking a bank account
+        # and topping up, which is the on-ramp FR 2.2 describes.
+        ngnBalance=Decimal("0"),
     )
     user._pinHash = hash_secret(details["pin"])
     db.add(user)
@@ -230,24 +252,77 @@ def admin_login(body: AdminLogin, db: Session = Depends(get_session)) -> dict:
     }
 
 
-@router.post("/regulator/login")
-def regulator_login(body: RegulatorLogin) -> dict:
-    """Regulator portal sign-in.
+@router.post("/regulator/register", status_code=status.HTTP_201_CREATED)
+def regulator_register(body: RegulatorSignup, db: Session = Depends(get_session)) -> dict:
+    """Register a named person at a regulator (SRS 2.3).
 
-    A shared access code rather than per-person accounts, which matches how the
-    portal is described in SRS §2.3: quarterly or on-demand read-only access for
-    a named regulator, not a staffed console.  The code is configuration, and
-    the session it mints is read-only because no write route accepts the
-    regulator audience.
+    The account is read-only by construction, so self-registration grants no
+    privilege that could be abused into a write. What it does grant is sight of
+    a pseudonymised transaction register, which is why the body a person claims
+    to represent is recorded on the account and carried into every export they
+    generate.
     """
-    valid = {"SEC_NIGERIA": "sec-ng-demo", "CMA_KENYA": "cma-ke-demo", "CBN": "cbn-demo"}
-    if valid.get(body.regulator) != body.accessCode:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid access code for that regulator.")
+    from ..models import RegulatorUser
 
-    token = create_token(body.regulator, audience="regulator", extra={"regulator": body.regulator})
+    existing = db.execute(
+        select(RegulatorUser).where(RegulatorUser.email == body.email)
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status.HTTP_409_CONFLICT, "That email already has portal access.")
+
+    account = RegulatorUser(
+        email=body.email,
+        fullName=body.fullName,
+        regulator=body.regulator,
+    )
+    account._passwordHash = hash_secret(body.password)
+    db.add(account)
+    db.flush()
+
+    audit.record(
+        db,
+        entity_type="RegulatorUser",
+        entity_id=account.id,
+        action="regulator.registered",
+        actor=ActorType.SYSTEM,
+        actor_id=body.email,
+        after={"email": body.email, "regulator": body.regulator},
+    )
+    db.commit()
+
+    token = create_token(account.id, audience="regulator", extra={"regulator": body.regulator})
     return {
         "token": token,
         "regulator": body.regulator,
+        "fullName": account.fullName,
+        "access": "read-only",
+    }
+
+
+@router.post("/regulator/login")
+def regulator_login(body: RegulatorLogin, db: Session = Depends(get_session)) -> dict:
+    """Regulator portal sign-in.
+
+    The session it mints is read-only because no write route anywhere accepts
+    the regulator audience.
+    """
+    from ..models import RegulatorUser
+    from ..models import utcnow as _now
+
+    account = db.execute(
+        select(RegulatorUser).where(RegulatorUser.email == body.email)
+    ).scalar_one_or_none()
+    if account is None or not verify_secret(body.password, account._passwordHash):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password.")
+
+    account.lastSeenAt = _now()
+    db.commit()
+
+    token = create_token(account.id, audience="regulator", extra={"regulator": account.regulator})
+    return {
+        "token": token,
+        "regulator": account.regulator,
+        "fullName": account.fullName,
         "access": "read-only",
         "scope": ["transactions", "reserve", "attestations", "exports", "audit-log"],
     }

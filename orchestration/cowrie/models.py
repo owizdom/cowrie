@@ -475,6 +475,10 @@ class ApiKey(AuditableEntity):
 
     # -- supporting fields ----------------------------------------------------
     partnerName: Mapped[str] = mapped_column(String(160), default="")
+    contactName: Mapped[str] = mapped_column(String(160), default="")
+    """Who at the partner owns this integration.  Shown in the portal header and
+    used to know who to contact when a key starts failing."""
+    contactEmail: Mapped[str] = mapped_column(String(255), default="")
     label: Mapped[str] = mapped_column(String(80), default="")
     prefix: Mapped[str] = mapped_column(String(24), index=True, default="")
     """Non-secret identifying prefix, e.g. ck_sandbox_a1b2c3 - lets the portal
@@ -697,6 +701,27 @@ class AdminUser(Base):
     fullName: Mapped[str] = mapped_column(String(160))
     role: Mapped[AdminRole] = mapped_column(EnumString(AdminRole), default=AdminRole.SUPPORT)
     _passwordHash: Mapped[str] = mapped_column("password_hash", String(255), default="")
+
+
+class RegulatorUser(Base):
+    """A named person at a regulator (SRS 2.3, "Regulators").
+
+    Their access is read-only and that is enforced structurally: no write route
+    accepts the `regulator` token audience, so there is no privilege here to
+    escalate. Accounts carry which body the person represents, because an
+    export generated for the SEC should be attributable to a person at the SEC.
+    """
+
+    __tablename__ = "regulator_users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    createdAt: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    fullName: Mapped[str] = mapped_column(String(160))
+    regulator: Mapped[str] = mapped_column(String(24), index=True)
+    """SEC_NIGERIA | CMA_KENYA | CBN"""
+    _passwordHash: Mapped[str] = mapped_column("password_hash", String(255), default="")
+    lastSeenAt: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
 
 
 class SanctionsEntry(Base):

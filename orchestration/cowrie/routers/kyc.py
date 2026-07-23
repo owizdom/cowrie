@@ -167,5 +167,67 @@ def link_account(
         "kind": body.kind,
         "institution": body.institution,
         "accountMasked": masked,
-        "provider": "Mono Connect (simulated)",
+    }
+
+
+class TopUpRequest(BaseModel):
+    amount: str = Field(description="Amount in NGN")
+
+
+@router.post("/top-up")
+async def top_up(
+    body: TopUpRequest,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Pull funds from the linked bank account into the wallet.
+
+    The same Mono on-ramp FR 2.2 uses to fund a transfer, exposed as its own
+    action so an account can hold a balance before sending. A wallet cannot be
+    funded without a linked account, which is why linking comes first.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    from ..adapters.mono import MonoAdapter
+
+    if not user.bankName:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Link a bank account before topping up.",
+        )
+
+    try:
+        amount = Decimal(body.amount)
+    except InvalidOperation as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Amount must be a number.") from exc
+
+    if amount <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Amount must be positive.")
+
+    result = await MonoAdapter().debit(
+        user_id=user.id, amount=amount, narration="CowriePay wallet top-up"
+    )
+    if not result.accepted:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, result.failure_reason)
+
+    before = audit.snapshot(user)
+    user.ngnBalance += amount
+
+    audit.record(
+        db,
+        entity_type="User",
+        entity_id=user.id,
+        action="wallet.topped_up",
+        actor=ActorType.USER,
+        actor_id=user.id,
+        before=before,
+        after=audit.snapshot(user),
+        detail={"amount": str(amount), "monoReference": result.reference},
+    )
+    db.commit()
+
+    return {
+        "credited": str(amount),
+        "balance": str(user.ngnBalance),
+        "reference": result.reference,
     }

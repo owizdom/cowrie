@@ -32,6 +32,7 @@ export default function RegisterPage() {
   const [challengeId, setChallengeId] = useState("");
   const [code, setCode] = useState("");
   const [sentCode, setSentCode] = useState("");
+  const [delivered, setDelivered] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -44,12 +45,16 @@ export default function RegisterPage() {
     setBusy(true);
     setError("");
     try {
-      const result = await api<{ challengeId: string; demoCode?: string }>("/auth/register/start", {
-        method: "POST",
-        body: { fullName, phone: phone.replace(/\s/g, ""), email, country: "NG", pin },
-      });
+      const result = await api<{ challengeId: string; code?: string; delivered: boolean }>(
+        "/auth/register/start",
+        {
+          method: "POST",
+          body: { fullName, phone: phone.replace(/\s/g, ""), email, country: "NG", pin },
+        },
+      );
       setChallengeId(result.challengeId);
-      if (result.demoCode) setSentCode(result.demoCode);
+      setDelivered(result.delivered);
+      if (result.code) setSentCode(result.code);
       setStep(2);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start sign-up.");
@@ -146,7 +151,9 @@ export default function RegisterPage() {
         >
           <div>
             <h1 className="text-xl font-bold tracking-tight text-heading">Enter the code</h1>
-            <p className="mt-1 text-[13px] text-muted">Sent to {phone}</p>
+            <p className="mt-1 text-[13px] text-muted">
+              {delivered ? `Sent to ${email}` : "Enter the code below"}
+            </p>
           </div>
 
           <input
@@ -167,9 +174,9 @@ export default function RegisterPage() {
             <button
               type="button"
               onClick={() => { setCode(sentCode); void verify(sentCode); }}
-              className="w-full text-center text-[12px] text-subtle hover:text-muted"
+              className="w-full rounded-field border border-line bg-canvas py-2.5 text-center text-[13px] font-medium text-ink hover:border-line-strong"
             >
-              Use {sentCode}
+              Your code is <span className="font-mono font-bold tracking-wider">{sentCode}</span> — tap to use
             </button>
           ) : null}
 

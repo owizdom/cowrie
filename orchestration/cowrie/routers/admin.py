@@ -771,6 +771,8 @@ class NewOperator(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+
+
 @router.get("/team")
 def team(
     admin: AdminUser = Depends(require_role(AdminRole.SUPPORT)),

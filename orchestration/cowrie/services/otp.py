@@ -74,11 +74,18 @@ class OtpService:
         self._challenges: dict[str, Challenge] = {}
 
     # -- issuing ------------------------------------------------------------
-    def issue(self, *, purpose: str, identifier: str, payload: dict | None = None) -> tuple[str, str]:
-        """Create a challenge.  Returns (challenge_id, code).
+    def issue(
+        self,
+        *,
+        purpose: str,
+        identifier: str,
+        payload: dict | None = None,
+        email: str = "",
+    ) -> tuple[str, str, bool]:
+        """Create a challenge.  Returns (challenge_id, code, delivered).
 
-        The plaintext code is returned to the caller because there is no SMS
-        provider; see the module docstring.
+        `delivered` says whether the code actually reached the user. When it is
+        False the caller must show the code, or sign-up becomes impossible.
         """
         code = "".join(secrets.choice("0123456789") for _ in range(CODE_LENGTH))
         challenge_id = f"otp_{secrets.token_hex(8)}"
@@ -91,17 +98,53 @@ class OtpService:
             payload=payload or {},
         )
         self._prune()
-        self._deliver(identifier=identifier, code=code, purpose=purpose)
-        return challenge_id, code
+        delivered = self._deliver(
+            identifier=identifier, code=code, purpose=purpose, email=email
+        )
+        return challenge_id, code, delivered
 
-    def _deliver(self, *, identifier: str, code: str, purpose: str) -> None:
-        """The SMS/email seam.
+    def _deliver(self, *, identifier: str, code: str, purpose: str, email: str = "") -> bool:
+        """Send the code, and report whether it actually went anywhere.
 
-        A real deployment sends `code` to `identifier` here.  This build logs it
-        and the API returns it, which is the honest behaviour when no provider
-        is configured.
+        FR 1.1 requires a one-time code but does not say by which channel - it
+        says "a phone number and email, verified by a one-time code". Email is
+        therefore compliant, and it is the channel that can be delivered for
+        free; SMS needs a paid provider account.
+
+        Returns True when the code was genuinely sent, so the caller knows
+        whether it still has to show it on screen. Reporting success when
+        nothing was sent would strand the user on a code they never receive.
         """
-        print(f"[otp] {purpose} code for {identifier}: {code} (no SMS provider; demo build)")
+        if not email or not settings.smtp_host:
+            print(f"[otp] {purpose} code for {identifier}: {code} (shown on screen)")
+            return False
+
+        import smtplib
+        from email.message import EmailMessage
+
+        message = EmailMessage()
+        message["Subject"] = f"{code} is your Cowrie code"
+        message["From"] = settings.smtp_from or settings.smtp_user
+        message["To"] = email
+        message.set_content(
+            f"Your Cowrie verification code is {code}.\n\n"
+            "It expires in 10 minutes and can only be used once.\n"
+            "If you did not request it, you can ignore this message."
+        )
+
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+                server.starttls()
+                if settings.smtp_user:
+                    server.login(settings.smtp_user, settings.smtp_password)
+                server.send_message(message)
+            print(f"[otp] {purpose} code emailed to {email}")
+            return True
+        except Exception as exc:  # noqa: BLE001
+            # A mail server that is down must not block sign-up. Fall back to
+            # showing the code rather than failing the registration.
+            print(f"[otp] email delivery failed ({exc}); showing the code instead")
+            return False
 
     # -- verifying ----------------------------------------------------------
     def verify(self, *, challenge_id: str, code: str) -> Challenge:

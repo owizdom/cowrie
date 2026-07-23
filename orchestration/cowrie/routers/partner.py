@@ -399,6 +399,8 @@ def transaction_stats(
     return {
         "periodDays": days,
         "partner": key.partnerName,
+        "contactName": key.contactName,
+        "environment": key.environment,
         "counts": {
             "created": len(intents),
             "settled": len(settled),
@@ -532,6 +534,7 @@ class PartnerSignup(BaseModel):
     """A business registering for API access."""
 
     organisation: str = Field(min_length=2, max_length=160)
+    fullName: str = Field(min_length=2, max_length=160, description="Who is integrating")
     email: str = Field(min_length=5, max_length=255)
     country: str = Field(default="NG", min_length=2, max_length=2)
 
@@ -562,6 +565,8 @@ def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) ->
         partnerId=partner_id,
         scopes="payments:read payments:write",
         partnerName=body.organisation.strip(),
+        contactName=body.fullName.strip(),
+        contactEmail=body.email.strip(),
         label="Secret key",
         prefix=pair["secret_prefix"],
         environment="sandbox",
@@ -573,6 +578,8 @@ def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) ->
         partnerId=partner_id,
         scopes="payments:read",
         partnerName=body.organisation.strip(),
+        contactName=body.fullName.strip(),
+        contactEmail=body.email.strip(),
         label="Publishable key",
         prefix=pair["publishable_prefix"],
         environment="sandbox",
@@ -595,6 +602,7 @@ def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) ->
     return {
         "partnerId": partner_id,
         "organisation": body.organisation.strip(),
+        "contactName": body.fullName.strip(),
         "environment": "sandbox",
         "secretKey": pair["secret"],
         "publishableKey": pair["publishable"],

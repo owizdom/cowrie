@@ -200,7 +200,9 @@ def create_transfer(
 
     # FR 2.2 - large transfers need a second factor as well as the PIN.
     if requires_step_up(float(tx.sourceAmount)):
-        challenge_id, code = otp_service.issue(purpose="STEP_UP", identifier=tx.id)
+        challenge_id, code, delivered = otp_service.issue(
+            purpose="STEP_UP", identifier=tx.id, email=user.email
+        )
         response["stepUp"] = {
             "required": True,
             "challengeId": challenge_id,
@@ -208,8 +210,8 @@ def create_transfer(
                 f"Transfers of ${tx.sourceAmount / Decimal(str(settings.mid_market_ngn_per_usd)):,.0f} "
                 "or more need a second factor (FR 2.2)."
             ),
-            "demoCode": code,
-            "demoNote": "Returned only because this build has no SMS provider wired.",
+            "delivered": delivered,
+            **({} if delivered else {"code": code}),
         }
     else:
         response["stepUp"] = {"required": False}

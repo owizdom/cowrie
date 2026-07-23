@@ -113,6 +113,26 @@ export default function HomePage() {
 
         <InstallPrompt />
 
+        {/*
+          A wallet with nothing in it cannot send, and the Send screen would
+          only fail at authorisation. Say so here, with the way out, rather
+          than letting someone discover it four steps later.
+        */}
+        {Number(user.ngnBalance) === 0 ? (
+          <div className="mx-5 mb-3 flex items-center gap-3 rounded-card border border-violet-100 bg-violet-50 px-3.5 py-3">
+            <Plus className="h-4 w-4 shrink-0 text-violet-600" />
+            <p className="min-w-0 flex-1 text-[12px] text-ink">
+              {user.bankName ? "Add money to start sending" : "Link a bank account to add money"}
+            </p>
+            <Link
+              href="/pay/receive"
+              className="shrink-0 rounded-pill bg-violet-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-violet-700"
+            >
+              {user.bankName ? "Add" : "Link"}
+            </Link>
+          </div>
+        ) : null}
+
         {/* ---- balance ---- */}
         <section className="px-5">
           <div className="relative overflow-hidden rounded-panel bg-balance p-5 text-white shadow-balance">
@@ -177,13 +197,15 @@ export default function HomePage() {
               <li className="card px-4 py-8 text-center">
                 <p className="text-sm font-semibold text-heading">No transfers yet</p>
                 <p className="mt-1 text-[13px] text-muted">
-                  Your first transfer to Kenya takes about thirty seconds.
+                  {Number(user.ngnBalance) > 0
+                    ? "A transfer to Kenya takes about thirty seconds."
+                    : "Add money first, then send."}
                 </p>
                 <Link
-                  href="/pay/send"
+                  href={Number(user.ngnBalance) > 0 ? "/pay/send" : "/pay/receive"}
                   className="mt-3 inline-block text-[13px] font-semibold text-violet-600"
                 >
-                  Send money
+                  {Number(user.ngnBalance) > 0 ? "Send money" : "Add money"}
                 </Link>
               </li>
             ) : (

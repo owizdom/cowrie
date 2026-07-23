@@ -155,7 +155,11 @@ export default function SendPage() {
   }, [step, secondsLeft, quote, amount, requestQuote]);
 
   const canContinue = Boolean(
-    quote && msisdn.replace(/\s/g, "").startsWith("+254") && msisdn.replace(/\s/g, "").length >= 12,
+    quote &&
+      msisdn.replace(/\s/g, "").startsWith("+254") &&
+      msisdn.replace(/\s/g, "").length >= 12 &&
+      user &&
+      Number(quote.source.amount) <= Number(user.ngnBalance),
   );
 
   // ---- step 1 -> 2: create the transfer --------------------------------
@@ -177,8 +181,8 @@ export default function SendPage() {
       setTransfer(created);
       // FR 2.2: a large transfer needs a second factor as well as the PIN. The
       // code is returned by the API because this build has no SMS provider.
-      if (created.stepUp?.required && created.stepUp.demoCode) {
-        setStepUpCode(created.stepUp.demoCode);
+      if (created.stepUp?.required && created.stepUp.code) {
+        setStepUpCode(created.stepUp.code);
       }
       setStep(2);
       setKeys(shuffled());
@@ -503,6 +507,17 @@ function StepOne({
           <p className="mt-2 flex items-center gap-1.5 text-[11px] italic text-subtle">
             <Refresh className="h-3 w-3" />
             1 NGN = {(1 / Number(quote.midMarketRate)).toFixed(4)} KES · refreshes in {secondsLeft}s
+          </p>
+        ) : null}
+
+        {/* Caught here rather than at authorisation, where the only outcome
+            would be a failed transfer and no way forward. */}
+        {quote && Number(quote.source.amount) > Number(user.ngnBalance) ? (
+          <p className="mt-2 text-[12px] text-warning">
+            That is more than your balance of {money(user.ngnBalance, "NGN")}.{" "}
+            <Link href="/pay/receive" className="font-semibold text-violet-600 underline">
+              Add money
+            </Link>
           </p>
         ) : null}
 
