@@ -11,13 +11,18 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowUp, Bell, Clock, Home, User } from "@/components/icons";
+import { ArrowDown, ArrowUp, Clock, Home, User } from "@/components/icons";
 import { cx } from "@/components/ui";
 
+/**
+ * Four destinations, each reaching a function SRS 2.2 names for CowriePay:
+ * Home, check history, send, and the profile screen that holds identity
+ * verification and support tickets. Nothing here that no requirement asks for.
+ */
 const TABS = [
   { href: "/pay", label: "Home", icon: Home },
   { href: "/pay/history", label: "History", icon: Clock },
-  { href: "/pay/receive", label: "Alerts", icon: Bell },
+  { href: "/pay/receive", label: "Receive", icon: ArrowDown },
   { href: "/pay/support", label: "Profile", icon: User },
 ];
 

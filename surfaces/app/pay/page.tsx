@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Bell, ArrowDown, ArrowUp, Link as LinkIcon, Plus, Scan } from "@/components/icons";
+import { ArrowDown, ArrowUp, Link as LinkIcon, Plus } from "@/components/icons";
 import { Avatar, Skeleton, cx } from "@/components/ui";
 import { TabBar } from "@/components/pay/tab-bar";
 import { InstallPrompt } from "@/components/pay/install";
@@ -94,26 +94,6 @@ export default function HomePage() {
             </p>
           </div>
 
-          <Link
-            href="/pay/receive"
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-line text-muted transition-colors hover:bg-canvas"
-            aria-label="Scan to receive"
-          >
-            <Scan className="h-[18px] w-[18px]" />
-          </Link>
-          <Link
-            href="/pay/history"
-            className="relative flex h-9 w-9 items-center justify-center rounded-full border border-line text-muted transition-colors hover:bg-canvas"
-            aria-label="Notifications"
-          >
-            <Bell className="h-[18px] w-[18px]" />
-            {/* Only shown when something is genuinely in flight. */}
-            {transfers?.some((t) =>
-              ["ONRAMP_PENDING", "BRIDGING", "OFFRAMP_PENDING", "REFUNDING"].includes(t.state),
-            ) ? (
-              <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-violet-600 ring-2 ring-white" />
-            ) : null}
-          </Link>
         </header>
 
         <InstallPrompt />

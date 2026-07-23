@@ -24,6 +24,8 @@ const NAV: NavItem[] = [
   { href: "/developers/webhooks", label: "Webhooks", icon: Webhook },
   { href: "/developers/try", label: "Try it", icon: Flask },
   { href: "/developers/logs", label: "Logs", icon: Chart },
+  // SRS 3.1: "visualizes the OpenAPI 3.0 documentation".
+  { href: "/developers/docs", label: "API reference", icon: Book },
 ];
 
 export default function DevelopersLayout({ children }: { children: React.ReactNode }) {

@@ -15,17 +15,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import {
-  Alert,
-  Chart,
-  Database,
-  Home,
-  IdCard,
-  Settings,
-  Shield,
-  Swap,
-  Upload,
-} from "@/components/icons";
+import { Alert, Database, Home, IdCard, Swap, Upload } from "@/components/icons";
 import { ConsoleShell, SystemStatus, type NavItem } from "@/components/shell/console";
 import { Button, ErrorText, Spinner, cx, inputClass } from "@/components/ui";
 import { CowrieMark } from "@/components/brand";
@@ -98,8 +88,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     },
     { href: "/admin/reserve", label: "cUSDC Reserves", icon: Database },
     { href: "/admin/audit", label: "Regulator Export", icon: Upload },
-    { href: "/admin/sanctions", label: "Sanctions Watch", icon: Shield },
-    { href: "/admin/settings", label: "Settings", icon: Settings },
   ];
 
   return (
