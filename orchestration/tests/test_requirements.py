@@ -592,9 +592,9 @@ class TestRegistration:
 
 class TestRateLimits:
     def test_unauthenticated_tier_is_ten_per_second(self, client):
-        from cowrie.middleware.ratelimit import window
+        from cowrie.services.cache import cache
 
-        window._hits.clear()
+        cache._local.clear()
 
         statuses = [client.get("/corridor").status_code for _ in range(15)]
         assert 429 in statuses, "the 10/s unauthenticated limit should engage"
@@ -602,9 +602,9 @@ class TestRateLimits:
 
     def test_health_is_never_rate_limited(self, client):
         """A health check that can be rate-limited takes the service down with it."""
-        from cowrie.middleware.ratelimit import window
+        from cowrie.services.cache import cache
 
-        window._hits.clear()
+        cache._local.clear()
         statuses = [client.get("/health").status_code for _ in range(30)]
         assert all(s == 200 for s in statuses)
 
@@ -633,3 +633,67 @@ class TestDisclosure:
             for state, targets in ALLOWED_TRANSITIONS.items()
         }
         assert published == actual
+
+
+# ---------------------------------------------------------------------------
+# SRS 3.3 - key rotation
+# ---------------------------------------------------------------------------
+
+
+class TestKeyRotation:
+    def test_keys_are_issued_with_a_ninety_day_life(self, client):
+        """SRS 3.3: "API keys ... are rotated every 90 days"."""
+        response = client.post(
+            "/v1/partners",
+            json={
+                "organisation": "Rotation Ltd",
+                "fullName": "Rota Tor",
+                "email": "rota@example.com",
+            },
+        )
+        assert response.status_code == 201
+
+        from datetime import UTC, datetime
+
+        expires = datetime.fromisoformat(response.json()["expiresAt"])
+        days = (expires - datetime.now(UTC)).days
+        assert 88 <= days <= 90, f"expected a ~90 day life, got {days}"
+
+    def test_an_expired_key_is_refused(self, client, db):
+        """An expired key must stop working, or the rotation is decorative."""
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import select
+
+        from cowrie.models import ApiKey
+
+        created = client.post(
+            "/v1/partners",
+            json={
+                "organisation": "Expiry Ltd",
+                "fullName": "Ex Piry",
+                "email": "ex@example.com",
+            },
+        ).json()
+        secret = created["secretKey"]
+
+        assert client.get("/v1/stats?days=1", headers={"X-API-Key": secret}).status_code == 200
+
+        # Wind the clock past the ninety days.
+        prefix = "_".join(secret.split("_")[:2]) + "_" + secret.split("_")[2][:6]
+        for row in db.execute(select(ApiKey).where(ApiKey.prefix == prefix)).scalars().all():
+            row.expiresAt = datetime.now(UTC) - timedelta(days=1)
+        db.commit()
+
+        response = client.get("/v1/stats?days=1", headers={"X-API-Key": secret})
+        assert response.status_code == 401
+        assert "expired" in response.json()["detail"].lower()
+
+
+class TestCache:
+    def test_rate_limiting_survives_a_missing_cache(self, client):
+        """SRS 3.3 names Redis, but its absence must degrade rather than break."""
+        from cowrie.services.cache import cache
+
+        assert cache.backend in {"redis", "in-process"}
+        assert client.get("/health").status_code == 200

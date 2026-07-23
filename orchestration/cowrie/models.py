@@ -486,13 +486,26 @@ class ApiKey(AuditableEntity):
     environment: Mapped[str] = mapped_column(String(16), default="sandbox")
     lastUsedAt: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
     requestCount: Mapped[int] = mapped_column(Integer, default=0)
+    expiresAt: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    """SRS 3.3 - "API keys and webhook signing secrets are rotated every 90
+    days". Set at creation; the authenticator refuses the key past it, which is
+    what turns a stated practice into an enforced one."""
 
     paymentIntents: Mapped[list[PaymentIntent]] = relationship(
         back_populates="apiKey",  # aggregation: no cascade
     )
 
     def isActive(self) -> bool:
-        return self.revokedAt is None
+        if self.revokedAt is not None:
+            return False
+        if self.expiresAt is not None and utcnow() >= self.expiresAt:
+            return False
+        return True
+
+    def daysUntilExpiry(self) -> int | None:
+        if self.expiresAt is None:
+            return None
+        return max(0, (self.expiresAt - utcnow()).days)
 
     def revoke(self) -> None:
         """+revoke() : void"""

@@ -124,6 +124,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     print(f"[cowrie] {settings.app_name} {settings.version}")
     print(f"[cowrie] database: {'sqlite' if settings.is_sqlite else 'postgresql'}")
     print(f"[cowrie] chain: {health['mode']} - {health['network']}")
+
+    from .services.cache import cache
+
+    print(f"[cowrie] cache: {cache.backend}")
     print(f"[cowrie] corridor: {settings.corridor_source} -> {settings.corridor_destination}")
 
     tasks = [
@@ -172,6 +176,11 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Trace-Id", "X-RateLimit-Remaining", "X-RateLimit-Limit", "Server-Timing"],
 )
+
+# SRS 2.4 - OpenTelemetry. Must run before the routers are exercised.
+from . import telemetry  # noqa: E402
+
+print(f"[cowrie] telemetry: {telemetry.setup(app)}")
 
 app.include_router(auth.router)
 app.include_router(transfers.router)

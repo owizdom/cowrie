@@ -31,13 +31,13 @@ which is stated rather than hidden.
 
 from __future__ import annotations
 
-import time
-from collections import defaultdict, deque
 from dataclasses import dataclass
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from ..services.cache import cache
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,38 +61,30 @@ ANON_TIER = Tier(name="anonymous", limit=10, window_seconds=1.0)
 
 
 class SlidingWindow:
-    """In-process sliding window keyed by caller."""
+    """Sliding window over the shared cache.
 
-    def __init__(self) -> None:
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
+    Backed by Redis when one is configured (SRS 3.3 names it as the
+    sliding-window rate limiter), and by an in-process dictionary otherwise.
+    The distinction is not cosmetic: with several API containers, per-process
+    counters would give a caller one budget per container instead of the single
+    budget SRS 3.4 specifies.
+    """
 
     def check(self, key: str, tier: Tier) -> tuple[bool, int, float]:
         """Return (allowed, remaining, retry_after_seconds)."""
-        now = time.monotonic()
-        window = self._hits[key]
-
-        horizon = now - tier.window_seconds
-        while window and window[0] < horizon:
-            window.popleft()
-
+        # Burst ceiling first, on its own short window: a caller may spike to
+        # the burst limit in one second provided they average the sustained
+        # rate across the longer window.
         if tier.burst_limit is not None:
-            burst_horizon = now - tier.burst_window_seconds
-            in_burst = sum(1 for t in window if t >= burst_horizon)
+            in_burst = cache.count(f"rl:{key}", tier.burst_window_seconds)
             if in_burst >= tier.burst_limit:
                 return False, 0, tier.burst_window_seconds
 
-        if len(window) >= tier.limit:
-            retry_after = max(0.0, window[0] + tier.window_seconds - now)
-            return False, 0, retry_after
+        used = cache.hit(f"rl:{key}", tier.window_seconds)
+        if used > tier.limit:
+            return False, 0, tier.window_seconds
 
-        window.append(now)
-        return True, tier.limit - len(window), 0.0
-
-    def sweep(self, older_than: float = 300.0) -> None:
-        """Drop keys nobody has used recently, so the map does not grow forever."""
-        cutoff = time.monotonic() - older_than
-        for key in [k for k, v in self._hits.items() if not v or v[-1] < cutoff]:
-            del self._hits[key]
+        return True, max(0, tier.limit - used), 0.0
 
 
 window = SlidingWindow()

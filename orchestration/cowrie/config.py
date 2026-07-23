@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     a demo, so its absence degrades rather than breaks."""
 
     # ---- one-time code delivery (FR 1.1) ---------------------------------
+    brevo_api_key: str = ""
+    """Preferred provider. Verifies a single sender address rather than a whole
+    domain, so it delivers to any recipient - which is what FR 1.1 needs."""
+    brevo_sender: str = "okechukwuwisdom016@gmail.com"
+
     resend_api_key: str = ""
     """Preferred channel. Sends over HTTPS, which platform hosts allow; they
     routinely block outbound SMTP ports, so smtp_* below works locally and
@@ -54,6 +59,15 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "Cowrie <no-reply@cowrie.africa>"
+
+    # ---- observability (SRS 2.4) -----------------------------------------
+    otel_endpoint: str = ""
+    """OTLP/HTTP collector URL. Empty means spans are produced and exported to
+    the console rather than shipped - SRS 2.4 names OpenTelemetry, and this is
+    the one value that turns it from local tracing into a real pipeline."""
+    otel_service_name: str = "cowrie-orchestration"
+    otel_console: bool = False
+    """Print spans to stdout. Useful locally, far too noisy in a deployment."""
 
     # ---- security --------------------------------------------------------
     jwt_secret: str = "cowrie-demo-secret-not-for-production"

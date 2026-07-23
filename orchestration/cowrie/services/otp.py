@@ -122,6 +122,15 @@ class OtpService:
         # HTTP first. Most platform hosts block outbound SMTP ports to stop
         # spam, so on a deployment port 587 fails with "Network is unreachable"
         # while an HTTPS API on 443 goes straight through.
+        #
+        # Brevo is tried before Resend because it verifies a single sender
+        # address, so it can deliver to any recipient. Resend requires a whole
+        # verified domain and otherwise refuses anyone but the account owner -
+        # fine for a smoke test, useless for real sign-ups.
+        if settings.brevo_api_key:
+            if self._send_via_brevo(email=email, code=code):
+                return True
+
         if settings.resend_api_key:
             if self._send_via_resend(email=email, code=code):
                 return True
@@ -156,6 +165,44 @@ class OtpService:
             # showing the code rather than failing the registration.
             print(f"[otp] email delivery failed ({exc}); showing the code instead")
             return False
+
+    def _send_via_brevo(self, *, email: str, code: str) -> bool:
+        """Send over Brevo's HTTPS API.
+
+        Brevo verifies a sender address rather than a domain, which is the
+        difference that matters here: it will deliver to any recipient, so a
+        facilitator signing up with their own address actually receives the
+        code.
+        """
+        import httpx
+
+        try:
+            response = httpx.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": settings.brevo_api_key,
+                    "content-type": "application/json",
+                    "accept": "application/json",
+                },
+                json={
+                    "sender": {"name": "Cowrie", "email": settings.brevo_sender},
+                    "to": [{"email": email}],
+                    "subject": f"{code} is your Cowrie code",
+                    "textContent": (
+                        f"Your Cowrie verification code is {code}.\n\n"
+                        "It expires in 10 minutes and can only be used once.\n"
+                        "If you did not request it, you can ignore this message."
+                    ),
+                },
+                timeout=10,
+            )
+            if response.status_code < 300:
+                print(f"[otp] code emailed to {email} via brevo")
+                return True
+            print(f"[otp] brevo rejected the request ({response.status_code}): {response.text[:200]}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[otp] brevo unreachable ({exc})")
+        return False
 
     def _send_via_resend(self, *, email: str, code: str) -> bool:
         """Send over HTTPS rather than SMTP.

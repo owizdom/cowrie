@@ -123,6 +123,19 @@ def api_key_auth(
     candidates = db.execute(select(ApiKey).where(ApiKey.prefix == prefix)).scalars().all()
 
     for candidate in candidates:
+        if verify_secret(x_api_key, candidate._keyHash) and not candidate.isActive():
+            # Distinguish expiry from a bad key: the fix is a rotation, not a
+            # hunt for a typo.
+            from ..models import utcnow as _now
+
+            expired = candidate.expiresAt is not None and _now() >= candidate.expiresAt
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED,
+                "This API key expired after 90 days. Create a replacement in the portal."
+                if expired
+                else "This API key has been revoked.",
+            )
+
         if candidate.isActive() and verify_secret(x_api_key, candidate._keyHash):
             from ..models import utcnow
 

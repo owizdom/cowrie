@@ -39,6 +39,9 @@ from .deps import require_scope
 
 router = APIRouter(prefix="/v1", tags=["cowrie-api"])
 
+#: SRS 3.3 - keys and webhook signing secrets are rotated every 90 days.
+KEY_LIFETIME_DAYS = 90
+
 
 # ---------------------------------------------------------------------------
 # schemas
@@ -560,6 +563,8 @@ def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) ->
 
     partner_id = str(_uuid.uuid4())
     pair = generate_key_pair("sandbox")
+    # SRS 3.3: "API keys and webhook signing secrets are rotated every 90 days".
+    expires = datetime.now(UTC) + timedelta(days=KEY_LIFETIME_DAYS)
 
     secret = ApiKey(
         partnerId=partner_id,
@@ -570,6 +575,7 @@ def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) ->
         label="Secret key",
         prefix=pair["secret_prefix"],
         environment="sandbox",
+        expiresAt=expires,
     )
     secret._keyHash = hash_secret(pair["secret"])
     db.add(secret)
@@ -583,6 +589,7 @@ def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) ->
         label="Publishable key",
         prefix=pair["publishable_prefix"],
         environment="sandbox",
+        expiresAt=expires,
     )
     publishable._keyHash = hash_secret(pair["publishable"])
     db.add(publishable)
@@ -606,6 +613,7 @@ def register_partner(body: PartnerSignup, db: Session = Depends(get_session)) ->
         "environment": "sandbox",
         "secretKey": pair["secret"],
         "publishableKey": pair["publishable"],
+        "expiresAt": expires.isoformat(),
         "warning": "The secret key is shown once. Store it now.",
     }
 
@@ -623,6 +631,7 @@ def create_key(
     possible without downtime.
     """
     pair = generate_key_pair(key.environment or "sandbox")
+    expires = datetime.now(UTC) + timedelta(days=KEY_LIFETIME_DAYS)
 
     secret = ApiKey(
         partnerId=key.partnerId,
@@ -633,6 +642,7 @@ def create_key(
         label="Secret key",
         prefix=pair["secret_prefix"],
         environment=key.environment or "sandbox",
+        expiresAt=expires,
     )
     secret._keyHash = hash_secret(pair["secret"])
     db.add(secret)
@@ -646,6 +656,7 @@ def create_key(
         label="Publishable key",
         prefix=pair["publishable_prefix"],
         environment=key.environment or "sandbox",
+        expiresAt=expires,
     )
     publishable._keyHash = hash_secret(pair["publishable"])
     db.add(publishable)
@@ -665,6 +676,7 @@ def create_key(
     return {
         "secretKey": pair["secret"],
         "publishableKey": pair["publishable"],
+        "expiresAt": expires.isoformat(),
         "warning": "The secret key is shown once. Store it now.",
     }
 
@@ -691,6 +703,9 @@ def list_keys(
                 "scopes": row.scopes,
                 "environment": row.environment,
                 "revoked": row.revokedAt is not None,
+                "expiresAt": row.expiresAt.isoformat() if row.expiresAt else None,
+                "daysUntilExpiry": row.daysUntilExpiry(),
+                "expired": row.expiresAt is not None and not row.isActive() and row.revokedAt is None,
                 "current": row.id == key.id,
                 "lastUsedAt": row.lastUsedAt.isoformat() if row.lastUsedAt else None,
                 "requestCount": row.requestCount,
