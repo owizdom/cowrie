@@ -17,7 +17,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { CowrieMark } from "@/components/brand";
-import { Search, Bell } from "@/components/icons";
+import { Search } from "@/components/icons";
 import { cx } from "@/components/ui";
 
 export type NavItem = {
@@ -88,17 +88,6 @@ export function ConsoleShell({
 
           <div className="ml-auto flex items-center gap-3 md:ml-0">
             <EnvironmentPill {...environment} />
-
-            <button
-              type="button"
-              className="relative hidden h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-canvas sm:flex"
-              aria-label="Notifications"
-            >
-              <Bell className="h-[18px] w-[18px]" />
-              <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-danger ring-2 ring-white" />
-            </button>
-
-            <span className="hidden h-6 w-px bg-line sm:block" />
 
             <div className="flex items-center gap-2.5">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-100 text-[11px] font-semibold text-violet-700">

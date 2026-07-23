@@ -107,7 +107,12 @@ export default function HomePage() {
             aria-label="Notifications"
           >
             <Bell className="h-[18px] w-[18px]" />
-            <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-danger ring-2 ring-white" />
+            {/* Only shown when something is genuinely in flight. */}
+            {transfers?.some((t) =>
+              ["ONRAMP_PENDING", "BRIDGING", "OFFRAMP_PENDING", "REFUNDING"].includes(t.state),
+            ) ? (
+              <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-violet-600 ring-2 ring-white" />
+            ) : null}
           </Link>
         </header>
 
