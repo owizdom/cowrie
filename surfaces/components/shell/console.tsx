@@ -27,6 +27,16 @@ export type NavItem = {
   badgeTone?: "danger" | "warning" | "violet";
 };
 
+/** One selectable environment in the console's environment switch (SRS 3.1). */
+export type EnvironmentOption = {
+  value: string;
+  label: string;
+  active: boolean;
+  /** Present when the environment exists but cannot be entered yet, with why. */
+  locked?: boolean;
+  hint?: string;
+};
+
 export function ConsoleShell({
   product,
   nav,
@@ -37,7 +47,12 @@ export function ConsoleShell({
 }: {
   product: string;
   nav: NavItem[];
-  environment: { label: string; tone: "production" | "sandbox" };
+  environment: {
+    label: string;
+    tone: "production" | "sandbox";
+    environments?: EnvironmentOption[];
+    onSelect?: (value: string) => void;
+  };
   user: { name: string; role: string; initials: string };
   footer: React.ReactNode;
   children: React.ReactNode;
@@ -157,21 +172,100 @@ export function ConsoleShell({
   );
 }
 
-function EnvironmentPill({ label, tone }: { label: string; tone: "production" | "sandbox" }) {
-  return (
-    <span
-      className={cx(
-        "inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1.5 text-[12px] font-semibold",
-        tone === "production"
-          ? "bg-success-bg text-success ring-1 ring-inset ring-success-ring"
-          : "bg-warning-bg text-warning ring-1 ring-inset ring-warning-ring",
-      )}
-    >
+function EnvironmentPill({
+  label,
+  tone,
+  environments,
+  onSelect,
+}: {
+  label: string;
+  tone: "production" | "sandbox";
+  environments?: EnvironmentOption[];
+  onSelect?: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const body = (
+    <>
       <span
         className={cx("h-1.5 w-1.5 rounded-full", tone === "production" ? "bg-success" : "bg-warning")}
       />
       {label}
-    </span>
+    </>
+  );
+
+  const pill = cx(
+    "inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1.5 text-[12px] font-semibold",
+    tone === "production"
+      ? "bg-success-bg text-success ring-1 ring-inset ring-success-ring"
+      : "bg-warning-bg text-warning ring-1 ring-inset ring-warning-ring",
+  );
+
+  // Nothing to switch between: stay a label rather than pretending to be a control.
+  if (!environments || environments.length < 2) {
+    return <span className={pill}>{body}</span>;
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={`Environment: ${label}. Change environment`}
+        className={cx(pill, "transition-opacity hover:opacity-90")}
+      >
+        {body}
+        <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" aria-hidden="true">
+          <path d="M2 4.5 6 8.5l4-4" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        </svg>
+      </button>
+
+      {open ? (
+        <>
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-30 cursor-default"
+          />
+          <div
+            role="listbox"
+            className="absolute right-0 z-40 mt-2 w-64 overflow-hidden rounded-card border border-line bg-white shadow-lg"
+          >
+            {environments.map((env) => (
+              <button
+                key={env.value}
+                type="button"
+                role="option"
+                aria-selected={env.active}
+                disabled={env.locked}
+                onClick={() => {
+                  if (env.locked) return;
+                  onSelect?.(env.value);
+                  setOpen(false);
+                }}
+                className={cx(
+                  "flex w-full flex-col items-start gap-0.5 px-3 py-2.5 text-left transition-colors",
+                  env.locked ? "cursor-not-allowed opacity-60" : "hover:bg-canvas",
+                )}
+              >
+                <span className="flex w-full items-center justify-between gap-2 text-[13px] font-semibold text-ink">
+                  {env.label}
+                  {env.active ? <span className="text-[11px] text-violet-600">Current</span> : null}
+                  {env.locked ? <span className="text-[11px] text-subtle">Locked</span> : null}
+                </span>
+                {env.hint ? (
+                  <span className="text-[11px] leading-snug text-muted">{env.hint}</span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
   );
 }
 

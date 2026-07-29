@@ -221,11 +221,34 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
   }
 
   return (
-    <PortalContext.Provider value={{ apiKey }}>
+    <PortalContext.Provider value={{ apiKey, environment: "sandbox" }}>
       <ConsoleShell
         product="Cowrie Developers"
         nav={NAV}
-        environment={{ label: "Sandbox", tone: "sandbox" }}
+        environment={{
+          label: "Sandbox",
+          tone: "sandbox",
+          // SRS 3.1's environment switch. Production is shown because it is
+          // real and a partner needs to know it exists, and locked because
+          // FR 4.1 puts a live corridor behind business verification - a manual
+          // step, not a form. Offering a toggle that silently did nothing would
+          // be worse than showing the requirement.
+          environments: [
+            {
+              value: "sandbox",
+              label: "Sandbox",
+              active: true,
+              hint: "Simulated partners and seeded liquidity. No real money moves.",
+            },
+            {
+              value: "production",
+              label: "Production",
+              active: false,
+              locked: true,
+              hint: "Verify your business to issue live keys. Cowrie holds no VASP registration in this build, so no live corridor exists.",
+            },
+          ],
+        }}
         user={{
           name: profile?.contactName || profile?.partner || "Partner",
           role: profile?.partner ?? "",
