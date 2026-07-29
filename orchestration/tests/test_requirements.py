@@ -690,6 +690,256 @@ class TestKeyRotation:
         assert "expired" in response.json()["detail"].lower()
 
 
+# ---------------------------------------------------------------------------
+# FR 5.3 - the signed regulator export
+# ---------------------------------------------------------------------------
+
+
+def _admin_token(client, db, role) -> str:
+    """Create a console operator at `role` and sign in."""
+    from cowrie.models import AdminUser
+    from cowrie.security import hash_secret
+
+    email = f"{str(role).lower()}@exports.example.com"
+    operator = AdminUser(email=email, fullName=f"{role} Operator", role=role)
+    operator._passwordHash = hash_secret("cowrie-demo")
+    db.add(operator)
+    db.commit()
+
+    response = client.post(
+        "/auth/admin/login", json={"email": email, "password": "cowrie-demo"}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["token"]
+
+
+def _regulator_token(client) -> str:
+    response = client.post(
+        "/auth/regulator/register",
+        json={
+            "fullName": "Ada Regulator",
+            "email": "ada@sec.example.com",
+            "regulator": "SEC_NIGERIA",
+            "password": "regulator-demo",
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["token"]
+
+
+def _generate_export(client, token: str) -> dict:
+    response = client.post(
+        "/regulator/exports?regulator=SEC_NIGERIA&days=30",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _signed_body(document: str) -> str:
+    """The verification recipe from the guide, reimplemented independently.
+
+    Deliberately not calling a helper from the router: a check that shares its
+    implementation with the thing it checks proves only that the code agrees
+    with itself. This is what a regulator would write.
+    """
+    return "".join(
+        line for line in document.splitlines(keepends=True) if not line.startswith("#")
+    )
+
+
+def _header_field(document: str, label: str) -> str:
+    for line in document.splitlines():
+        if line.startswith(f"# {label}:"):
+            return line.split(":", 1)[1].strip()
+    raise AssertionError(f"'{label}' missing from the export header")
+
+
+class TestRegulatorExport:
+    def test_fr53_download_requires_a_session(self, client, db):
+        """The pseudonymised register is not public.
+
+        Every other regulator route refuses an anonymous caller; the download
+        used to be the one that did not.
+        """
+        from cowrie.enums import AdminRole
+
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        export = _generate_export(client, officer)
+        url = export["downloadUrl"]
+
+        assert client.get(url).status_code == 401, "an anonymous caller must not read the register"
+
+        # SRS 2.3 gives export sight to Regulators and to Officer-and-above.
+        regulator = _regulator_token(client)
+        assert client.get(url, headers={"Authorization": f"Bearer {regulator}"}).status_code == 200
+        assert client.get(url, headers={"Authorization": f"Bearer {officer}"}).status_code == 200
+
+    def test_fr53_support_role_cannot_download_an_export(self, client, db):
+        """RBAC is not bypassed by holding any admin token."""
+        from cowrie.enums import AdminRole
+
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        export = _generate_export(client, officer)
+
+        support = _admin_token(client, db, AdminRole.SUPPORT)
+        response = client.get(
+            export["downloadUrl"], headers={"Authorization": f"Bearer {support}"}
+        )
+        assert response.status_code == 403
+
+    def test_fr53_signature_covers_the_delivered_csv_body(self, client, db, user):
+        """The hash in the header must be reproducible from the file itself.
+
+        Previously the hash was taken over a JSON view of the rows while the
+        download rendered CSV, so this comparison could never succeed and the
+        verification instruction in the guide was impossible to follow.
+        """
+        import hashlib
+
+        from cowrie.enums import AdminRole
+
+        # A settled transfer, so the report has real rows rather than a header.
+        _one_transaction(db, user)
+
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        export = _generate_export(client, officer)
+        auth = {"Authorization": f"Bearer {officer}"}
+
+        document = client.get(export["downloadUrl"], headers=auth).text
+        body = _signed_body(document)
+        recomputed = hashlib.sha256(body.encode()).hexdigest()
+
+        assert recomputed == _header_field(document, "Content SHA-256")
+        assert recomputed == export["contentHash"]
+        assert body.strip(), "the report should carry rows, not just a header block"
+
+    def test_fr53_an_empty_period_is_still_a_signed_report(self, client, db):
+        """A report covering no transactions is signed, not "unverifiable".
+
+        `sha256("")` is a real answer to a real question - the regulator asked
+        what happened in a period and the answer is "nothing". Treating the
+        empty body as "no body was stored" would label a correct report as
+        unverifiable, which is the opposite of the point.
+        """
+        from cowrie.enums import AdminRole
+
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        export = _generate_export(client, officer)
+        auth = {"Authorization": f"Bearer {officer}"}
+
+        assert export["rowCount"] == 0
+
+        verdict = client.get(export["verifyUrl"], headers=auth).json()
+        assert verdict["signatureAssurance"] == "demo-signed"
+        assert verdict["matches"] is True
+        assert verdict["signatureValid"] is True
+
+    def test_fr53_verify_endpoint_agrees_with_the_document(self, client, db, user):
+        _one_transaction(db, user)
+
+        from cowrie.enums import AdminRole
+
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        export = _generate_export(client, officer)
+        auth = {"Authorization": f"Bearer {officer}"}
+
+        verdict = client.get(export["verifyUrl"], headers=auth).json()
+        assert verdict["matches"] is True
+        assert verdict["signatureValid"] is True
+        assert verdict["recomputedHash"] == export["contentHash"]
+
+    @pytest.mark.asyncio
+    async def test_fr53_a_signed_report_does_not_change_afterwards(self, client, db, user, chain):
+        """The body is frozen at signing time.
+
+        A transfer inside the reporting period keeps moving after the report is
+        signed. If the rows were re-derived on download, the same export would
+        render a different document later - same period, same signature,
+        different contents.
+        """
+        from cowrie.enums import AdminRole, TransactionState
+
+        quote = quote_engine.quote(source_amount=Decimal("50000"))
+        tx = transfer_service.create_transfer(
+            db, user=user, quote=quote, recipient_name="Mary Wanjiru",
+            recipient_msisdn="+254712345678",
+        )
+        await transfer_service.authorize(db, tx=tx, user=user, pin="123456")
+        transaction_id = tx.id
+
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        auth = {"Authorization": f"Bearer {officer}"}
+        export = _generate_export(client, officer)
+        before = client.get(export["downloadUrl"], headers=auth).text
+        assert "AUTHORIZED" in before
+
+        # Carry the same transfer to a terminal state.
+        await transfer_service.drive(transaction_id)
+        db.expire_all()
+        assert db.get(Transaction, transaction_id).state == TransactionState.SETTLED
+
+        after = client.get(export["downloadUrl"], headers=auth).text
+        assert after == before, "a signed report must not change after it was signed"
+        assert client.get(export["verifyUrl"], headers=auth).json()["matches"] is True
+
+
+def _one_transaction(db, user) -> Transaction:
+    """A transaction inside the reporting period, so an export has a row.
+
+    The report covers every transaction in the window whatever its state, so
+    this does not need to settle - and staying synchronous keeps it usable from
+    the non-async tests.
+    """
+    quote = quote_engine.quote(source_amount=Decimal("50000"))
+    return transfer_service.create_transfer(
+        db, user=user, quote=quote, recipient_name="Mary Wanjiru",
+        recipient_msisdn="+254712345678",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Disclosure: the demo must not advertise credentials that do not work
+# ---------------------------------------------------------------------------
+
+
+class TestDemoCredentials:
+    def test_demo_config_advertises_only_working_credentials(self, client, db):
+        """A credential printed by the running system must authenticate.
+
+        The seeder was emptied and the advertised sign-ins were left behind, so
+        two of the three published logins failed against a fresh database. This
+        holds the endpoint to the rule that made them wrong: anything it marks
+        `provisioned` has to actually work.
+        """
+        from cowrie.seed import provision
+
+        provision()
+
+        access = client.get("/demo/config").json()["access"]
+        surfaces = {k: v for k, v in access.items() if isinstance(v, dict)}
+        assert surfaces, "the endpoint should describe how to reach each surface"
+
+        for name, entry in surfaces.items():
+            if not entry.get("provisioned"):
+                # A surface with no seeded account must say how to get one
+                # rather than naming a login that does not exist.
+                assert entry.get("howTo"), f"{name} is not provisioned and offers no route in"
+                assert "pin" not in entry and "password" not in entry, (
+                    f"{name} is not provisioned but publishes a credential"
+                )
+                continue
+
+            assert name == "admin", f"unexpected provisioned surface: {name}"
+            response = client.post(
+                "/auth/admin/login",
+                json={"email": entry["email"], "password": entry["password"]},
+            )
+            assert response.status_code == 200, (
+                f"/demo/config advertises {entry['email']}, which does not authenticate"
+            )
+
+
 class TestCache:
     def test_rate_limiting_survives_a_missing_cache(self, client):
         """SRS 3.3 names Redis, but its absence must degrade rather than break."""

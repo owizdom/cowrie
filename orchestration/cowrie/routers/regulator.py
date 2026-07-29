@@ -17,17 +17,32 @@ can detect alteration. The signature is produced by
 export is labelled `demo-signed` in its own metadata. Handing a regulator a
 document that claims a cryptographic assurance it does not have would be worse
 than handing them an unsigned one.
+
+What the signature actually covers
+----------------------------------
+The hash is taken over the CSV body byte-for-byte - the header row and the data
+rows, with the `#` comment block excluded - and that exact body is stored on the
+export row. Two things follow, and both are the point:
+
+  * A verifier can reproduce the hash. Strip every line beginning with `#`,
+    SHA-256 the rest as UTF-8, and compare. `GET /exports/{id}/verify` runs that
+    procedure server-side so the instruction in the guide is executable rather
+    than merely stated.
+
+  * The report cannot drift after it is signed. Re-deriving the rows at download
+    time would let a transfer that was in flight at signing appear later with a
+    different state, a settledAt and an M-Pesa receipt - the same period, a
+    different document, one hash. The stored body is served verbatim instead.
 """
 
 from __future__ import annotations
 
 import csv
 import io
-import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -36,9 +51,9 @@ from ..config import settings
 from ..db import get_session
 from ..enums import ActorType, AdminRole
 from ..models import AdminUser, RegulatorExport, Transaction, User
-from ..security import sha256_hex, sign_with_platform_key
+from ..security import constant_time_equals, sha256_hex, sign_with_platform_key
 from ..services import audit, reserve_service
-from .deps import current_regulator, require_role
+from .deps import current_regulator, regulator_or_officer, require_role
 
 router = APIRouter(prefix="/regulator", tags=["regulator"])
 
@@ -107,6 +122,27 @@ def _report_rows(db: Session, start: datetime, end: datetime) -> list[dict]:
             }
         )
     return rows
+
+
+def _render_csv(rows: list[dict]) -> str:
+    """Render the report body: one header row, then the data. No comment lines.
+
+    This is the material the signature covers, so it has exactly one producer.
+    Two call sites rendering "the same" CSV independently is how the hash and
+    the document drift apart.
+
+    `lineterminator` is pinned because `csv.writer` defaults to CRLF while the
+    comment block above it is written with LF - a verifier splitting on newlines
+    would otherwise hash bytes that differ from the ones on the wire.
+    """
+    if not rows:
+        return ""
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=list(rows[0].keys()), lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    return buffer.getvalue()
 
 
 @router.get("/profile")
@@ -180,15 +216,20 @@ def generate_export(
 ) -> dict:
     """Generate a signed report (FR 5.3).
 
-    Officer role or above. The report is hashed, the hash is signed, and both
-    are stored so the same report can be re-verified later.
+    Officer role or above. The report is rendered once, the rendered bytes are
+    hashed, the hash is signed, and the bytes themselves are stored - so the
+    document a regulator downloads later is the document that was signed, not a
+    fresh rendering that happens to cover the same period.
     """
     end = datetime.now(UTC)
     start = end - timedelta(days=days)
     rows = _report_rows(db, start, end)
 
-    payload = json.dumps(rows, sort_keys=True, separators=(",", ":"))
-    content_hash = sha256_hex(payload)
+    # Hash the CSV the regulator actually receives. Hashing a JSON view of the
+    # same rows would attest to a document nobody is ever handed, and could not
+    # be recomputed from the download.
+    body = _render_csv(rows)
+    content_hash = sha256_hex(body)
     signature = sign_with_platform_key(content_hash)
 
     settled = [r for r in rows if r["state"] == "SETTLED"]
@@ -203,6 +244,7 @@ def generate_export(
         contentHash=content_hash,
         signature=signature,
         generatedBy=admin.email,
+        csvBody=body,
     )
     db.add(record)
     db.flush()
@@ -230,12 +272,17 @@ def generate_export(
         "contentHash": content_hash,
         "signature": signature,
         "signatureScheme": "HMAC-SHA256 over the report content hash",
+        "signatureCovers": (
+            "The CSV body byte-for-byte (header row + data rows), excluding the "
+            "'#' metadata block. SHA-256, UTF-8."
+        ),
         "signatureAssurance": "demo-signed",
         "signatureNote": (
             "Signed with an application key, not hardware. NFR 2 requires an HSM; "
             "this build has none, and the label says so."
         ),
         "downloadUrl": f"/regulator/exports/{record.id}/download",
+        "verifyUrl": f"/regulator/exports/{record.id}/verify",
     }
 
 
@@ -267,16 +314,51 @@ def list_exports(db: Session = Depends(get_session), session: dict = Depends(cur
     }
 
 
-@router.get("/exports/{export_id}/download")
-def download_export(export_id: str, db: Session = Depends(get_session)) -> StreamingResponse:
-    """Download a report as CSV, with its signature in the header block."""
+def _load_export(db: Session, export_id: str) -> RegulatorExport:
     record = db.get(RegulatorExport, export_id)
     if record is None:
-        from fastapi import HTTPException, status
-
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Export not found")
+    return record
 
-    rows = _report_rows(db, record.periodStart, record.periodEnd)
+
+def _export_body(record: RegulatorExport, db: Session) -> tuple[str, str]:
+    """Return (body, assurance).
+
+    Rows written before the body was stored have nothing to serve verbatim, so
+    they are re-derived and labelled for what they are. Letting a legacy row
+    present itself as verifiable would be the same dishonesty the stored body
+    exists to remove.
+
+    The test is `is None`, not truthiness: a report covering a period with no
+    transactions has an empty body, and that is a perfectly well-signed empty
+    report - `sha256("")` is a real answer to a real question. Only a row that
+    predates the column, which `_sync_columns` back-filled as NULL, is legacy.
+    """
+    if record.csvBody is not None:
+        return record.csvBody, "demo-signed"
+    return (
+        _render_csv(_report_rows(db, record.periodStart, record.periodEnd)),
+        "unverifiable-legacy",
+    )
+
+
+@router.get("/exports/{export_id}/download")
+def download_export(
+    export_id: str,
+    db: Session = Depends(get_session),
+    session: dict = Depends(regulator_or_officer),
+) -> StreamingResponse:
+    """Download a report as CSV, with its signature in the header block.
+
+    Authenticated: this is the pseudonymised transaction register, and the
+    surrounding module is read-only *by audience*, not public. A regulator
+    session or an Officer-and-above admin session both open it (SRS §2.3).
+
+    The body is the one that was signed, served verbatim - see the module
+    docstring for why it is not re-derived here.
+    """
+    record = _load_export(db, export_id)
+    body, assurance = _export_body(record, db)
 
     buffer = io.StringIO()
     regulator_name = REGULATORS.get(record.regulator, {}).get("name", record.regulator)
@@ -285,22 +367,64 @@ def download_export(export_id: str, db: Session = Depends(get_session)) -> Strea
     buffer.write(f"# Rows: {record.rowCount}\n")
     buffer.write(f"# Content SHA-256: {record.contentHash}\n")
     buffer.write(f"# Signature: {record.signature}\n")
-    buffer.write("# Signature assurance: demo-signed (application key, not an HSM)\n")
+    buffer.write(f"# Signature assurance: {assurance} (application key, not an HSM)\n")
     buffer.write(f"# Generated: {record.createdAt.isoformat()} by {record.generatedBy}\n")
+    buffer.write("# To verify: discard every line beginning with '#', then SHA-256 the\n")
+    buffer.write("#            remainder as UTF-8 and compare with Content SHA-256 above.\n")
     buffer.write("#\n")
+    buffer.write(body)
 
-    if rows:
-        writer = csv.DictWriter(buffer, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
-
-    buffer.seek(0)
     filename = f"cowrie-{record.regulator.lower()}-{record.periodStart:%Y%m%d}-{record.periodEnd:%Y%m%d}.csv"
     return StreamingResponse(
         iter([buffer.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/exports/{export_id}/verify")
+def verify_export(
+    export_id: str,
+    db: Session = Depends(get_session),
+    session: dict = Depends(regulator_or_officer),
+) -> dict:
+    """Run the verification the guide describes, server-side.
+
+    An instruction a regulator cannot execute is not an assurance. This
+    recomputes the hash over the stored body and re-derives the signature, and
+    reports both outcomes separately: a content mismatch means the report was
+    altered, a signature mismatch means the report was signed by something other
+    than this platform key.
+    """
+    record = _load_export(db, export_id)
+    body, assurance = _export_body(record, db)
+
+    recomputed = sha256_hex(body)
+    expected_signature = sign_with_platform_key(record.contentHash)
+
+    return {
+        "id": record.id,
+        "regulator": record.regulator,
+        "contentHash": record.contentHash,
+        "recomputedHash": recomputed,
+        "matches": constant_time_equals(recomputed, record.contentHash),
+        "signatureValid": constant_time_equals(expected_signature, record.signature),
+        "signatureAssurance": assurance,
+        "bytesVerified": len(body.encode()),
+        "procedure": (
+            "SHA-256 over the CSV body (header row + data rows) as UTF-8, "
+            "excluding every line beginning with '#'."
+        ),
+        "note": (
+            "The stored body is served byte-for-byte, so this result also holds "
+            "for the file returned by the download endpoint."
+        )
+        if record.csvBody is not None
+        else (
+            "This export predates body storage: it is re-derived at read time "
+            "and cannot be meaningfully verified."
+        ),
+    }
 
 
 @router.get("/guide")
@@ -341,12 +465,19 @@ def integration_guide() -> dict:
                 ),
             },
             {
-                "title": "3. How reports are signed",
+                "title": "3. How reports are signed, and how to check one",
                 "body": (
                     "Each export carries a SHA-256 hash of its contents and a signature over that "
-                    "hash. Recomputing the hash from the CSV body and checking it against the "
-                    "header detects any alteration. In this build the signature is an application "
-                    "key rather than hardware, and every export says so in its own metadata."
+                    "hash. The hash covers the CSV body byte-for-byte - the header row and the "
+                    "data rows - and excludes the '#' metadata block above them. To verify a "
+                    "report you have been sent: discard every line beginning with '#', SHA-256 "
+                    "the remainder as UTF-8, and compare the result with the Content SHA-256 in "
+                    "the header. GET /regulator/exports/{id}/verify performs the same check "
+                    "server-side and reports the content and signature results separately. "
+                    "The body is stored at the moment it is signed and served unchanged "
+                    "afterwards, so a report cannot quietly differ from the hash that attests to "
+                    "it. In this build the signature is an application key rather than hardware, "
+                    "and every export says so in its own metadata."
                 ),
             },
             {

@@ -802,5 +802,17 @@ class RegulatorExport(Base):
     rowCount: Mapped[int] = mapped_column(Integer, default=0)
     totalVolumeUsd: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
     contentHash: Mapped[str] = mapped_column(String(64), default="")
+    """SHA-256 over `csvBody` exactly as stored, and exactly as served."""
     signature: Mapped[str] = mapped_column(String(255), default="")
     generatedBy: Mapped[str] = mapped_column(String(120), default="")
+
+    csvBody: Mapped[str] = mapped_column(Text, default="")
+    """The rendered report, frozen at the moment it was signed.
+
+    A signed document that is re-derived when someone downloads it is not
+    signed: the transactions inside the period keep moving - a transfer that
+    was BRIDGING at signing time is SETTLED an hour later, with a settledAt and
+    an M-Pesa receipt it did not have - so the bytes handed to the regulator
+    would drift away from the hash that attests to them.  Storing the body is
+    what makes the signature mean something.
+    """

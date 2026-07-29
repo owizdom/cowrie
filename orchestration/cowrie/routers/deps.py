@@ -98,6 +98,49 @@ def current_regulator(
     return payload
 
 
+def regulator_or_officer(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Admit either audience, for the artefacts both of them own.
+
+    A signed regulator export has two legitimate readers, and SRS §2.3 names
+    both: the Regulator, whose privilege column is "read-only audit & export",
+    and the Cowrie Officer, who generates the report in the first place.  A
+    route serving that artefact therefore cannot use a single-audience
+    dependency without locking one of them out.
+
+    `require_role` cannot be composed here: it depends on `current_admin`,
+    which raises before the regulator branch could be tried.  So both tokens
+    are decoded directly, regulator first, and the caller's identity is
+    returned so the route can attribute the access.
+    """
+    token = _bearer(authorization)
+
+    payload = decode_token(token, audience="regulator")
+    if payload is not None:
+        return {
+            "kind": "regulator",
+            "id": payload.get("sub", ""),
+            "regulator": payload.get("regulator", ""),
+        }
+
+    payload = decode_token(token, audience="admin")
+    if payload is not None:
+        admin = db.get(AdminUser, payload["sub"])
+        if admin is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Admin account not found")
+        if ROLE_ORDER.index(admin.role) < ROLE_ORDER.index(AdminRole.OFFICER):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"Regulator exports need the {AdminRole.OFFICER} role or higher; "
+                f"you are {admin.role}.",
+            )
+        return {"kind": "admin", "id": admin.id, "email": admin.email}
+
+    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired session")
+
+
 def api_key_auth(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     db: Session = Depends(get_session),
