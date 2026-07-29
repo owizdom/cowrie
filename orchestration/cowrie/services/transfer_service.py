@@ -553,6 +553,12 @@ async def _drive_inner(transaction_id: str) -> None:
         tx.mpesaReceipt = payout.receipt
         db.commit()
 
+        # FR 4.3 names 'payout completed' separately from 'payment settled', and
+        # they are separate moments: Daraja has credited the wallet, but the
+        # transfer is not yet in a terminal state. A partner reconciling against
+        # an M-Pesa statement needs this one, at this instant, not the later one.
+        await _fire_webhook(db, tx, "payout.completed")
+
         await transition(
             db,
             tx,

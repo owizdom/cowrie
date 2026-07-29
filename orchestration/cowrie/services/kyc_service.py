@@ -29,7 +29,7 @@ from ..adapters.smileid import SmileIdAdapter
 from ..enums import ActorType, KycIdType, KycStatus
 from ..models import KycSubmission, User
 from ..security import encrypt_id_number, id_number_tail
-from . import audit
+from . import audit, webhooks
 from .sanctions import service as sanctions_service
 
 smile = SmileIdAdapter()
@@ -113,10 +113,19 @@ async def submit(
         },
     )
     db.commit()
+
+    # FR 4.3 - a submission that Smile ID decided outright is already complete,
+    # so the event fires here rather than waiting for a review that will not
+    # happen. One left PENDING notifies later, from decide().
+    if submission.status != KycStatus.PENDING:
+        await webhooks.emit_kyc_completed(
+            db, user_id=user.id, submission_id=submission.id, status=str(submission.status)
+        )
+
     return submission
 
 
-def decide(
+async def decide(
     db: Session,
     *,
     submission: KycSubmission,
@@ -124,7 +133,11 @@ def decide(
     admin_email: str,
     reason: str = "",
 ) -> KycSubmission:
-    """An analyst approves, rejects or freezes a queued submission (FR 5.2)."""
+    """An analyst approves, rejects or freezes a queued submission (FR 5.2).
+
+    Async because deciding a submission completes it, and FR 4.3 requires the
+    partner who introduced this person to be told.
+    """
     if submission.status != KycStatus.PENDING:
         raise KycError(f"This submission was already {submission.status}.")
 
@@ -160,6 +173,15 @@ def decide(
         detail={"reason": reason},
     )
     db.commit()
+
+    # FR 4.3 - the submission is now decided, whichever way it went.
+    await webhooks.emit_kyc_completed(
+        db,
+        user_id=submission.userId,
+        submission_id=submission.id,
+        status=str(submission.status),
+    )
+
     return submission
 
 

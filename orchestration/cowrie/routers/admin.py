@@ -242,7 +242,7 @@ def kyc_queue(
 
 
 @router.post("/kyc/{submission_id}/decide")
-def decide_kyc(
+async def decide_kyc(
     submission_id: str,
     body: KycDecision,
     admin: AdminUser = Depends(require_role(AdminRole.REVIEWER)),
@@ -258,7 +258,7 @@ def decide_kyc(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Submission not found")
 
     try:
-        submission = kyc_service.decide(
+        submission = await kyc_service.decide(
             db,
             submission=submission,
             decision=body.decision,

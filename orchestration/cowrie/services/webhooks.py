@@ -268,15 +268,46 @@ def history(db: Session, *, partner_id: str, limit: int = 50) -> list[dict]:
     ]
 
 
-async def emit_kyc_completed(partner_id: str, submission_id: str, status: str) -> None:
-    """FR 4.3 names 'KYC completed' as one of the four events."""
-    with session_scope() as db:
-        await deliver(
-            db,
-            partner_id=partner_id,
-            event="kyc.completed",
-            payload={"id": submission_id, "object": "kyc_submission", "status": status},
+def partners_for_user(db: Session, user_id: str) -> set[str]:
+    """Which partners are entitled to hear about this user.
+
+    A partner may be told about a person only if that partner moved money for
+    them - which is exactly the set of users reachable through the partner's own
+    payment intents. Deriving the audience from that relationship rather than
+    broadcasting is what keeps one partner from learning the KYC outcomes of
+    another partner's customers.
+    """
+    from ..models import ApiKey, PaymentIntent, Transaction
+
+    key_ids = (
+        db.execute(
+            select(PaymentIntent.apiKeyId)
+            .join(Transaction, Transaction.id == PaymentIntent.transactionId)
+            .where(Transaction.senderId == user_id)
         )
+        .scalars()
+        .all()
+    )
+    if not key_ids:
+        return set()
+
+    return set(
+        db.execute(select(ApiKey.partnerId).where(ApiKey.id.in_(set(key_ids)))).scalars().all()
+    )
+
+
+async def emit_kyc_completed(db: Session, *, user_id: str, submission_id: str, status: str) -> None:
+    """FR 4.3 names 'KYC completed' as one of the four events.
+
+    Fired on every decided submission - approved, rejected or frozen - because a
+    partner reconciling an onboarding funnel needs the outcome, not only the
+    happy one. Delivered to the partners that have moved money for this person
+    and to nobody else; a consumer who has never transacted through the API
+    reaches an empty audience, and no request is made.
+    """
+    payload = {"id": submission_id, "object": "kyc_submission", "status": status}
+    for partner_id in partners_for_user(db, user_id):
+        await deliver(db, partner_id=partner_id, event="kyc.completed", payload=payload)
 
 
 async def emit_payout_completed(partner_id: str, payload: dict) -> None:
