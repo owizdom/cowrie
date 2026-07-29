@@ -231,3 +231,84 @@ async def top_up(
         "balance": str(user.ngnBalance),
         "reference": result.reference,
     }
+
+
+@router.post("/withdraw")
+async def withdraw(
+    body: TopUpRequest,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Send wallet funds back to the linked Nigerian bank account.
+
+    The other half of SRS 1.4's off-ramp: "Safaricom Daraja B2C (KES to M-Pesa);
+    Mono payout (NGN to bank)". Daraja pays the recipient at the far end of the
+    corridor; this pays the sender at the near end, which is what a wallet
+    balance is for and what makes the top-up reversible.
+
+    Debited before the payout is attempted and restored if it fails, so a
+    rejected disbursement cannot leave the money in neither place.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    from ..adapters.mono import MonoAdapter
+
+    if not user.bankName:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Link a bank account before withdrawing.",
+        )
+
+    try:
+        amount = Decimal(body.amount)
+    except InvalidOperation as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Amount must be a number.") from exc
+
+    if amount <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Amount must be positive.")
+    if amount > user.ngnBalance:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            f"You have {user.ngnBalance:,.2f} NGN available.",
+        )
+
+    before = audit.snapshot(user)
+    user.ngnBalance -= amount
+    db.commit()
+
+    result = await MonoAdapter().payout(
+        account_number=user.bankAccountMasked,
+        bank_code="",
+        amount=amount,
+        narration="CowriePay withdrawal",
+    )
+    if not result.credited:
+        user.ngnBalance += amount
+        db.commit()
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, result.failure_reason)
+
+    audit.record(
+        db,
+        entity_type="User",
+        entity_id=user.id,
+        action="wallet.withdrawn",
+        actor=ActorType.USER,
+        actor_id=user.id,
+        before=before,
+        after=audit.snapshot(user),
+        detail={
+            "amount": str(amount),
+            "monoReference": result.reference,
+            "nibssSessionId": result.session_id,
+            "destination": user.bankAccountMasked,
+        },
+    )
+    db.commit()
+
+    return {
+        "debited": str(amount),
+        "balance": str(user.ngnBalance),
+        "reference": result.reference,
+        "sessionId": result.session_id,
+        "destination": {"bank": user.bankName, "account": user.bankAccountMasked},
+    }

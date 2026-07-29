@@ -40,6 +40,15 @@ class MonoRefundResult:
     failure_reason: str = ""
 
 
+@dataclass(slots=True)
+class MonoPayoutResult:
+    credited: bool
+    reference: str
+    session_id: str = ""
+    """NIBSS session id - the reference a Nigerian bank statement shows."""
+    failure_reason: str = ""
+
+
 class MonoAdapter:
     """Simulated NGN debit and refund."""
 
@@ -80,6 +89,46 @@ class MonoAdapter:
         return MonoRefundResult(
             refunded=True,
             reference=f"MONO-RFD-{secrets.token_hex(4).upper()}",
+        )
+
+    async def payout(
+        self,
+        *,
+        account_number: str,
+        bank_code: str,
+        amount: Decimal,
+        narration: str,
+        force_failure: bool = False,
+    ) -> MonoPayoutResult:
+        """Disburse NGN into a Nigerian bank account.
+
+        SRS 1.4 scopes the off-ramp as "Safaricom Daraja B2C (KES to M-Pesa);
+        **Mono payout (NGN to bank)**" - two destinations, not one. Daraja
+        credits a Kenyan wallet on the outbound corridor; this is the leg that
+        pays a Nigerian bank, which is what the return corridor needs and what
+        a refund to a recipient rather than a sender would use.
+
+        The real call settles over NIBSS and returns a session id, which is the
+        reference that appears on the beneficiary's statement - the NGN
+        equivalent of Daraja's transaction receipt, and the thing FR 2.3's
+        "match the ID to the on-chain record" needs on this side.
+
+        Not simulated: beneficiary name enquiry, which a real disbursement runs
+        first so the payer sees whose account they are about to credit.
+        """
+        await asyncio.sleep(settings.scaled(1.4))
+
+        if force_failure:
+            return MonoPayoutResult(
+                credited=False,
+                reference="",
+                failure_reason="Mono payout declined: beneficiary account not found (simulated)",
+            )
+
+        return MonoPayoutResult(
+            credited=True,
+            reference=f"MONO-OUT-{secrets.token_hex(5).upper()}",
+            session_id=f"{secrets.token_hex(8).upper()}",
         )
 
     async def account_snapshot(self, *, user_id: str) -> dict:
