@@ -441,7 +441,10 @@ function StepOne({
           </ul>
         ) : null}
 
-        {msisdn && !recipientName ? (
+        {/* Shown once there is a number to attach a name to, and kept mounted
+            after that. Gating on `!recipientName` unmounted the field on its
+            own first keystroke, which made the name impossible to type. */}
+        {msisdn ? (
           <input
             type="text"
             value={recipientName}
