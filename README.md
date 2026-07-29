@@ -2,6 +2,25 @@
 
 **A cross-border payment network for Africa.**
 
+### Try it now
+
+| | |
+|---|---|
+| **Live app** | **https://cowrie-web-production.up.railway.app** |
+| **API** | https://cowrie-api-production.up.railway.app |
+| **Interactive API docs** | https://cowrie-api-production.up.railway.app/docs |
+| **Public transparency page** | https://cowrie-web-production.up.railway.app/transparency |
+
+Open **`/pay`**, create an account with any phone number and email — the
+verification code is shown on screen — then send a transfer and watch it settle
+in about thirty seconds. Nothing is seeded, so what you see is what you did.
+
+On Android, Chrome will offer to install CowriePay to your home screen. On
+iPhone, Safari installs it through **Share → Add to Home Screen**. Either way it
+opens full-screen with no browser chrome.
+
+The admin console at `/admin` signs in with `amara@cowrie.demo` / `cowrie-demo`.
+
 Cowrie settles payments between African currencies in seconds at under 1% in
 fees, using **cUSDC** — a USD-pegged stablecoin — as the neutral bridge between
 local on-ramps and off-ramps. The launch corridor is **Nigeria → Kenya**: naira
@@ -284,7 +303,7 @@ reaches Base mainnet or Base Sepolia**, and no funded key exists.
 make test
 ```
 
-**55 Python tests** covering the requirements — the fee arithmetic, the state
+**63 Python tests** covering the requirements — the fee arithmetic, the state
 machine's refusal to make illegal moves, the settlement guarantee, the mint
 gate, the audit chain, and API idempotency.
 
@@ -459,13 +478,14 @@ measured over recent requests.
 
 ## Documentation
 
-| | |
-|---|---|
-| **Interactive API** | http://localhost:8000/docs |
-| **OpenAPI 3.0** | http://localhost:8000/openapi.json |
-| **Requirements map** | `GET /requirements` |
-| **UML analysis models** | [`docs/uml/`](docs/uml/) |
-| **Public disclosure** | `GET /transparency` |
+| | Deployed | Local |
+|---|---|---|
+| **App** | https://cowrie-web-production.up.railway.app | http://localhost:3000 |
+| **Interactive API** | https://cowrie-api-production.up.railway.app/docs | http://localhost:8000/docs |
+| **OpenAPI 3.0** | https://cowrie-api-production.up.railway.app/openapi.json | http://localhost:8000/openapi.json |
+| **Requirements map** | `GET /requirements` | `GET /requirements` |
+| **Public disclosure** | `GET /transparency` | `GET /transparency` |
+| **UML analysis models** | [`docs/uml/`](docs/uml/) | |
 
 ---
 

@@ -514,6 +514,128 @@ def _api_key(db) -> str:
     return plaintext
 
 
+class TestNgnOffRamp:
+    """SRS 1.4: the off-ramp is Daraja to M-Pesa *and* Mono payout to bank."""
+
+    def _session(self, client) -> dict:
+        start = client.post(
+            "/auth/register/start",
+            json={
+                "fullName": "Ngn Withdrawer", "phone": "+2348077777777",
+                "email": "withdraw@example.com", "country": "NG", "pin": "654321",
+            },
+        ).json()
+        token = client.post(
+            "/auth/register/verify",
+            json={"challengeId": start["challengeId"], "code": start["code"]},
+        ).json()["token"]
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_withdrawal_requires_a_linked_account(self, client):
+        auth = self._session(client)
+        response = client.post("/kyc/withdraw", headers=auth, json={"amount": "1000"})
+        assert response.status_code == 409
+
+    def test_withdrawal_returns_ngn_to_the_bank(self, client):
+        auth = self._session(client)
+        client.post(
+            "/kyc/link-account",
+            headers=auth,
+            json={"kind": "BANK", "institution": "GTB", "accountNumber": "0123454417"},
+        )
+        client.post("/kyc/top-up", headers=auth, json={"amount": "100000"})
+
+        response = client.post("/kyc/withdraw", headers=auth, json={"amount": "40000"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+        assert body["balance"] == "60000.000000"
+        assert body["sessionId"], "a NIBSS session id is what the bank statement shows"
+        assert body["destination"]["account"].endswith("4417")
+
+    def test_cannot_withdraw_more_than_the_balance(self, client):
+        auth = self._session(client)
+        client.post(
+            "/kyc/link-account",
+            headers=auth,
+            json={"kind": "BANK", "institution": "GTB", "accountNumber": "0123454417"},
+        )
+        client.post("/kyc/top-up", headers=auth, json={"amount": "5000"})
+
+        response = client.post("/kyc/withdraw", headers=auth, json={"amount": "9000"})
+        assert response.status_code == 402
+        # The balance must be untouched by a refused withdrawal.
+        assert client.get("/auth/me", headers=auth).json()["user"]["ngnBalance"] == "5000.000000"
+
+
+class TestWebhookEvents:
+    """FR 4.3 names four events. All four must be reachable from real code."""
+
+    def test_fr43_every_subscribable_event_has_an_emitter(self):
+        """A partner must not be able to subscribe to something that never fires.
+
+        `webhooks.EVENTS` is the subscription allowlist, and its own docstring
+        says it exists so that cannot happen. Two of the four named events were
+        in the set with no caller anywhere, which broke exactly that promise.
+        """
+        import inspect
+
+        from cowrie.routers import partner
+        from cowrie.services import kyc_service, transfer_service, webhooks
+
+        sources = "\n".join(
+            inspect.getsource(m) for m in (transfer_service, kyc_service, webhooks, partner)
+        )
+        for event in webhooks.EVENTS:
+            assert f'"{event}"' in sources, (
+                f"{event} is subscribable but nothing in the codebase emits it"
+            )
+
+    def test_fr43_payout_completed_is_distinct_from_payment_settled(self):
+        """They are different moments and both are required by name."""
+        import inspect
+
+        from cowrie.services import transfer_service
+
+        source = inspect.getsource(transfer_service)
+        assert '"payout.completed"' in source
+        assert '"payment.settled"' in source
+
+    def test_fr43_kyc_events_do_not_leak_between_partners(self, db, user):
+        """A partner hears about a person only if it moved money for them."""
+        from cowrie.services.webhooks import partners_for_user
+
+        # A consumer who has never transacted through the API reaches nobody.
+        assert partners_for_user(db, user.id) == set()
+
+    def test_fr43_kyc_audience_is_the_partner_that_transacted(self, client, db):
+        """The audience is derived from the partner's own payment intents."""
+        from sqlalchemy import select
+
+        from cowrie.models import ApiKey, PaymentIntent, Transaction
+        from cowrie.services.webhooks import partners_for_user
+
+        secret = _api_key(db)
+        response = client.post(
+            "/v1/payment_intents",
+            headers={"X-API-Key": secret, "Idempotency-Key": "kyc-audience-1"},
+            json={
+                "amount": "50000", "recipientName": "Mary Wanjiru",
+                "recipientMsisdn": "+254712345678",
+            },
+        )
+        assert response.status_code == 201, response.text
+
+        db.expire_all()
+        intent = db.execute(
+            select(PaymentIntent).where(PaymentIntent.idempotencyKey == "kyc-audience-1")
+        ).scalar_one()
+        tx = db.get(Transaction, intent.transactionId)
+        key = db.get(ApiKey, intent.apiKeyId)
+
+        assert partners_for_user(db, tx.senderId) == {key.partnerId}
+
+
 # ---------------------------------------------------------------------------
 # FR 1.1 - registration
 # ---------------------------------------------------------------------------
