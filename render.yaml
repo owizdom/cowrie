@@ -50,6 +50,18 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "20.18.1"
+      # The browser talks to the API directly rather than through the Next
+      # rewrite. Next bakes rewrite destinations into the build manifest and
+      # does not proxy WebSocket upgrades, so routing through /api would leave
+      # the live transaction status of SRS 3.4 permanently unconnected.
+      # NEXT_PUBLIC_* is inlined at build time, which is when Render supplies it.
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: cowrie-api
+          property: host
+      # Still set, so server-rendered requests and the /api rewrite keep working
+      # for anything that is not a socket.
       - key: COWRIE_API_URL
         fromService:
           type: web

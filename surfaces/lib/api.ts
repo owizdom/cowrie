@@ -11,6 +11,20 @@
  */
 
 /**
+ * Add a scheme when the platform hands over a bare host.
+ *
+ * Render's `fromService … property: host` and Railway's service variables both
+ * yield `cowrie-api.example.com` with no scheme, and a bare host concatenated
+ * onto a path produces `//cowrie-api.example.com/quotes` - a protocol-relative
+ * URL that resolves against the wrong origin, and a WebSocket URL that will not
+ * parse at all. next.config.ts normalises COWRIE_API_URL the same way; this is
+ * the client-side half of that.
+ */
+function withScheme(raw: string): string {
+  return /^https?:\/\//.test(raw) ? raw : `https://${raw}`;
+}
+
+/**
  * Where the orchestration tier lives.
  *
  * Same-origin `/api` in development, where next.config.ts rewrites it. In a
@@ -20,7 +34,7 @@
  * SRS 3.4 would silently never connect.
  */
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL
-  ? `${process.env.NEXT_PUBLIC_API_URL}`
+  ? withScheme(process.env.NEXT_PUBLIC_API_URL)
   : "/api";
 
 export type Audience = "cowriepay" | "admin" | "regulator";
@@ -127,7 +141,7 @@ export function openSocket(
   const query = token ? `?token=${encodeURIComponent(token)}` : "";
   const base = process.env.NEXT_PUBLIC_API_URL;
   const url = base
-    ? `${base.replace(/^http/, "ws")}/ws/${channel}${query}`
+    ? `${withScheme(base).replace(/^http/, "ws")}/ws/${channel}${query}`
     : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/api/ws/${channel}${query}`;
 
   let socket: WebSocket | null = null;
