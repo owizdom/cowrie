@@ -36,19 +36,11 @@ import {
 } from "@/components/icons";
 import { Avatar, Button, ErrorText, Notice, Skeleton, cx, inputClass } from "@/components/ui";
 import { useRequireSession } from "@/components/pay/session";
+import { useShuffledKeys } from "@/components/pay/keypad";
 import { api, type Quote, type Transfer } from "@/lib/api";
 import { avatarTone, groupDigits, initials, money, prettyMsisdn } from "@/lib/format";
 
 const PIN_LENGTH = 6;
-
-function shuffled(): number[] {
-  const digits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  for (let i = digits.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [digits[i], digits[j]] = [digits[j], digits[i]];
-  }
-  return digits;
-}
 
 type Beneficiary = { name: string; msisdn: string };
 
@@ -69,14 +61,13 @@ export default function SendPage() {
   // step 2
   const [transfer, setTransfer] = useState<Transfer | null>(null);
   const [pin, setPin] = useState("");
-  const [keys, setKeys] = useState<number[]>([]);
   const [stepUpCode, setStepUpCode] = useState("");
   const [busy, setBusy] = useState(false);
 
   const [error, setError] = useState("");
   const quoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => setKeys(shuffled()), []);
+  const { keys, reshuffle } = useShuffledKeys();
 
   // ---- recent beneficiaries, for the quick-pick row --------------------
   useEffect(() => {
@@ -185,13 +176,13 @@ export default function SendPage() {
         setStepUpCode(created.stepUp.code);
       }
       setStep(2);
-      setKeys(shuffled());
+      reshuffle();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start that transfer.");
     } finally {
       setBusy(false);
     }
-  }, [quote, msisdn, recipientName]);
+  }, [quote, msisdn, recipientName, reshuffle]);
 
   // ---- confirm ---------------------------------------------------------
   const confirm = useCallback(
@@ -213,11 +204,11 @@ export default function SendPage() {
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not confirm.");
         setPin("");
-        setKeys(shuffled());
+        reshuffle();
         setBusy(false);
       }
     },
-    [transfer, stepUpCode, router],
+    [transfer, stepUpCode, router, reshuffle],
   );
 
   const pressKey = useCallback(
@@ -233,6 +224,36 @@ export default function SendPage() {
     },
     [busy, confirm],
   );
+
+  const backspace = useCallback(() => {
+    setError("");
+    setPin((current) => current.slice(0, -1));
+  }, []);
+
+  // NFR 7: the keypad must be operable from a physical keyboard, the same way
+  // the login screen's is. Bound only on step 2 - on step 1 the amount and the
+  // recipient are real inputs, and swallowing their digits would break them.
+  useEffect(() => {
+    if (step !== 2) return;
+
+    const onKey = (event: KeyboardEvent) => {
+      if (busy) return;
+      // The step-up code is its own field; let it have its own keystrokes.
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+
+      if (/^[0-9]$/.test(event.key)) {
+        event.preventDefault();
+        pressKey(Number(event.key));
+      } else if (event.key === "Backspace") {
+        event.preventDefault();
+        backspace();
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [step, busy, pressKey, backspace]);
 
   if (loading || !user) {
     return (
@@ -671,11 +692,8 @@ function StepTwo({
       {/* PIN */}
       <div className="pt-1 text-center">
         <p className="text-[13px] text-muted">Enter your 6-digit PIN to confirm</p>
-        <div
-          className="mt-3 flex items-center justify-center gap-3"
-          role="img"
-          aria-label={`PIN entry, ${pin.length} of ${PIN_LENGTH} digits entered`}
-        >
+        {/* Decorative; the live region below is what assistive tech hears. */}
+        <div className="mt-3 flex items-center justify-center gap-3" aria-hidden="true">
           {Array.from({ length: PIN_LENGTH }).map((_, index) => (
             <span
               key={index}
@@ -688,6 +706,9 @@ function StepTwo({
             />
           ))}
         </div>
+        <span role="status" aria-live="polite" className="sr-only">
+          {pin.length} of {PIN_LENGTH} digits entered
+        </span>
       </div>
 
       {/* Shuffled keypad, same defence as the login screen. */}

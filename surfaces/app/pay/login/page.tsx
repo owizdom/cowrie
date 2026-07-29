@@ -22,19 +22,10 @@ import { CowrieMark } from "@/components/brand";
 import { Backspace, ChevronLeft, Info, ShieldCheck } from "@/components/icons";
 import { Button, ErrorText, cx, inputClass } from "@/components/ui";
 import { useSession } from "@/components/pay/session";
+import { useShuffledKeys } from "@/components/pay/keypad";
 
 const PIN_LENGTH = 6;
 const REMEMBERED_PHONE = "cowrie.pay.phone";
-
-/** Fisher-Yates. Unbiased, unlike sort(() => Math.random() - 0.5). */
-function shuffled(): number[] {
-  const digits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  for (let i = digits.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [digits[i], digits[j]] = [digits[j], digits[i]];
-  }
-  return digits;
-}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -43,14 +34,11 @@ export default function LoginPage() {
   const [phone, setPhone] = useState<string | null>(null);
   const [phoneDraft, setPhoneDraft] = useState("");
   const [pin, setPin] = useState("");
-  const [keys, setKeys] = useState<number[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
 
-  // Shuffle on the client only. Doing it during render would produce different
-  // markup on the server and the client and trip a hydration mismatch.
-  useEffect(() => setKeys(shuffled()), []);
+  const { keys, reshuffle } = useShuffledKeys();
 
   useEffect(() => {
     const remembered = window.localStorage.getItem(REMEMBERED_PHONE);
@@ -77,11 +65,11 @@ export default function LoginPage() {
         setPin("");
         // A fresh layout for the retry, so a watcher gets nothing from the
         // second attempt either.
-        setKeys(shuffled());
+        reshuffle();
         setBusy(false);
       }
     },
-    [phone, signIn, router],
+    [phone, signIn, router, reshuffle],
   );
 
   const press = useCallback(
@@ -203,13 +191,11 @@ export default function LoginPage() {
         </h1>
         <p className="mt-1.5 text-[13px] text-muted">Enter your 6-digit PIN to continue</p>
 
-        {/* PIN dots. The input is described to assistive tech by its label and
-            a live count, since the dots themselves carry no text. */}
-        <div
-          className="mt-7 flex items-center gap-3.5"
-          role="img"
-          aria-label={`PIN entry, ${pin.length} of ${PIN_LENGTH} digits entered`}
-        >
+        {/* The dots are decoration and are hidden from assistive tech: a
+            changing aria-label on a role="img" is not reliably announced, so a
+            screen-reader user got no confirmation that a digit registered. The
+            live region below is what speaks (NFR 7). */}
+        <div className="mt-7 flex items-center gap-3.5" aria-hidden="true">
           {Array.from({ length: PIN_LENGTH }).map((_, index) => (
             <span
               key={index}
@@ -222,6 +208,9 @@ export default function LoginPage() {
             />
           ))}
         </div>
+        <span role="status" aria-live="polite" className="sr-only">
+          {pin.length} of {PIN_LENGTH} digits entered
+        </span>
 
         <p className="mt-5 inline-flex items-center gap-1.5 text-[12px] text-subtle">
           <ShieldCheck className="h-3.5 w-3.5" />
