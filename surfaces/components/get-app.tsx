@@ -31,6 +31,7 @@ export function GetApp({ className }: { className?: string }) {
   const [deferred, setDeferred] = useState<InstallPromptEvent | null>(null);
   const [platform, setPlatform] = useState<"unknown" | "ios" | "installed">("unknown");
   const [hint, setHint] = useState("");
+  const [inSafari, setInSafari] = useState(true);
 
   useEffect(() => {
     const standalone =
@@ -43,6 +44,9 @@ export function GetApp({ className }: { className?: string }) {
 
     const ua = window.navigator.userAgent;
     if (/iPhone|iPad|iPod/.test(ua)) setPlatform("ios");
+    // Add to Home Screen is a Safari feature; the other iOS browsers do not
+    // have it, so the instructions have to differ.
+    setInSafari(!/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua));
 
     const onPrompt = (event: Event) => {
       event.preventDefault();
@@ -88,13 +92,36 @@ export function GetApp({ className }: { className?: string }) {
   }
 
   if (platform === "ios") {
+    // iOS has no install prompt to call - Safari has never implemented
+    // beforeinstallprompt - so the honest thing is to show the two taps rather
+    // than a button that appears to do it.
     return (
       <span className={className}>
-        <button type="button" className={base} onClick={() => setHint("share")}>
+        <button
+          type="button"
+          className={base}
+          aria-expanded={Boolean(hint)}
+          onClick={() => setHint("share")}
+        >
           <ArrowDown className="h-4 w-4" />
           Install CowriePay
         </button>
-        {hint ? <span className="mt-2 block text-[12px] text-subtle">Tap Share, then Add to Home Screen</span> : null}
+        {hint ? (
+          <span className="mt-2 block max-w-xs text-[12px] leading-relaxed text-subtle">
+            {inSafari ? (
+              <>
+                Tap <strong className="text-ink">Share</strong> at the bottom of Safari, then{" "}
+                <strong className="text-ink">Add to Home Screen</strong>. iPhone has no one-tap
+                install — this is the only route Apple provides.
+              </>
+            ) : (
+              <>
+                Open this page in <strong className="text-ink">Safari</strong> first — Add to Home
+                Screen is a Safari feature, and other iPhone browsers cannot install a web app.
+              </>
+            )}
+          </span>
+        ) : null}
       </span>
     );
   }
