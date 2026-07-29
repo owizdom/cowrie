@@ -9,28 +9,30 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Download } from "@/components/icons";
+import { ArrowDown, ArrowUp, ChevronLeft, Download } from "@/components/icons";
 import { Avatar, Badge, Button, Card, EmptyState, Skeleton, cx } from "@/components/ui";
 import { TabBar } from "@/components/pay/tab-bar";
 import { useRequireSession } from "@/components/pay/session";
-import { api, getToken, type Transfer } from "@/lib/api";
+import { api, getToken, type ActivityItem } from "@/lib/api";
 import { avatarTone, initials, money, relativeTime, STATE_PRESENTATION } from "@/lib/format";
 
 export default function HistoryPage() {
   const { user, loading } = useRequireSession();
-  const [transfers, setTransfers] = useState<Transfer[] | null>(null);
+  const [activity, setActivity] = useState<ActivityItem[] | null>(null);
   const [summary, setSummary] = useState<Record<string, string> | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const result = await api<{ transfers: Transfer[]; summary: Record<string, string> }>(
-        "/transfers?limit=100",
-        { audience: "cowriepay" },
-      );
-      setTransfers(result.transfers);
-      setSummary(result.summary);
+      // Two calls: the feed carries everything that moved the wallet, while the
+      // summary totals are about transfers alone.
+      const [feed, transfers] = await Promise.all([
+        api<{ activity: ActivityItem[] }>("/activity?limit=100", { audience: "cowriepay" }),
+        api<{ summary: Record<string, string> }>("/transfers?limit=1", { audience: "cowriepay" }),
+      ]);
+      setActivity(feed.activity);
+      setSummary(transfers.summary);
     } catch {
-      setTransfers([]);
+      setActivity([]);
     }
   }, []);
 
@@ -84,37 +86,87 @@ export default function HistoryPage() {
         </div>
 
         <ul className="mt-3 space-y-2 px-5">
-          {transfers === null ? (
+          {activity === null ? (
             <Skeleton className="h-20 w-full rounded-card" />
-          ) : transfers.length === 0 ? (
-            <EmptyState title="Nothing here yet">Your transfers will appear here.</EmptyState>
+          ) : activity.length === 0 ? (
+            <EmptyState title="Nothing here yet">
+              Top up your wallet, then send your first transfer.
+            </EmptyState>
           ) : (
-            transfers.map((t) => {
-              const p = STATE_PRESENTATION[t.state];
-              return (
-                <li key={t.id}>
-                  <Link href={`/pay/status/${t.id}`} className="flex items-center gap-3 rounded-card border border-line bg-white px-3.5 py-3 hover:border-line-strong">
-                    <Avatar name={initials(t.recipient.name)} tone={avatarTone(t.recipient.msisdn || t.id)} size="sm" />
+            activity.map((item) =>
+              item.type === "TRANSFER" ? (
+                <li key={item.id}>
+                  <Link href={`/pay/status/${item.id}`} className="flex items-center gap-3 rounded-card border border-line bg-white px-3.5 py-3 hover:border-line-strong">
+                    <Avatar name={initials(item.recipient.name)} tone={avatarTone(item.recipient.msisdn || item.id)} size="sm" />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-heading">{t.recipient.name}</p>
+                      <p className="truncate text-sm font-semibold text-heading">{item.recipient.name}</p>
                       <p className="truncate text-[12px] text-muted">
-                        {t.reference} · {relativeTime(t.createdAt)}
+                        {item.reference} · {relativeTime(item.createdAt)}
                       </p>
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="text-sm font-semibold tabular-nums text-heading">
-                        {money(t.source.amount, "NGN", { decimals: false })}
+                        −{money(item.source.amount, "NGN", { decimals: false })}
                       </p>
-                      <Badge tone={p.tone} className="mt-1">{p.label}</Badge>
+                      <Badge tone={STATE_PRESENTATION[item.state].tone} className="mt-1">
+                        {STATE_PRESENTATION[item.state].label}
+                      </Badge>
                     </div>
                   </Link>
                 </li>
-              );
-            })
+              ) : (
+                <li key={item.id}>
+                  <WalletRow item={item} />
+                </li>
+              ),
+            )
           )}
         </ul>
       </div>
       <TabBar />
+    </div>
+  );
+}
+
+/** A top-up or a withdrawal. Not a transfer, so it does not link to a status
+ *  screen — there is no settlement to follow, only a balance that changed. */
+function WalletRow({ item }: { item: Extract<ActivityItem, { type: "TOPUP" | "WITHDRAWAL" }> }) {
+  const incoming = item.type === "TOPUP";
+  const Icon = incoming ? ArrowDown : ArrowUp;
+
+  return (
+    <div className="flex items-center gap-3 rounded-card border border-line bg-white px-3.5 py-3">
+      <span
+        className={cx(
+          "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+          incoming ? "bg-success-bg text-success" : "bg-canvas text-muted",
+        )}
+        aria-hidden="true"
+      >
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-heading">
+          {incoming ? "Wallet top-up" : "Withdrawal to bank"}
+        </p>
+        <p className="truncate text-[12px] text-muted">
+          {item.counterparty.institution || "Linked bank"} · {relativeTime(item.createdAt)}
+        </p>
+      </div>
+      <div className="shrink-0 text-right">
+        <p
+          className={cx(
+            "text-sm font-semibold tabular-nums",
+            incoming ? "text-success" : "text-heading",
+          )}
+        >
+          {incoming ? "+" : "−"}
+          {money(item.amount, "NGN", { decimals: false })}
+        </p>
+        <p className="mt-0.5 text-[11px] tabular-nums text-subtle">
+          Balance {money(item.balanceAfter, "NGN", { decimals: false })}
+        </p>
+      </div>
     </div>
   );
 }

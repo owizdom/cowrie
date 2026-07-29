@@ -553,6 +553,59 @@ class TestNgnOffRamp:
         assert body["sessionId"], "a NIBSS session id is what the bank statement shows"
         assert body["destination"]["account"].endswith("4417")
 
+    def test_a_top_up_appears_in_the_activity_feed(self, client):
+        """Money arriving has to be visible.
+
+        A top-up moved `ngnBalance` and wrote an audit entry, and the history
+        screen reads transfers - so the balance changed with nothing on screen
+        to explain it.
+        """
+        auth = self._session(client)
+        client.post(
+            "/kyc/link-account",
+            headers=auth,
+            json={"kind": "BANK", "institution": "Guaranty Trust Bank", "accountNumber": "0123454417"},
+        )
+        client.post("/kyc/top-up", headers=auth, json={"amount": "75000"})
+
+        feed = client.get("/activity", headers=auth).json()["activity"]
+        topups = [row for row in feed if row["type"] == "TOPUP"]
+
+        assert len(topups) == 1, "the top-up should be in the feed"
+        assert topups[0]["amount"] == "75000.000000"
+        assert topups[0]["balanceAfter"] == "75000.000000"
+        assert topups[0]["counterparty"]["institution"] == "Guaranty Trust Bank"
+
+    def test_activity_interleaves_transfers_and_wallet_movements(self, client):
+        """One chronological feed, not two disconnected lists."""
+        auth = self._session(client)
+        client.post(
+            "/kyc/link-account",
+            headers=auth,
+            json={"kind": "BANK", "institution": "GTB", "accountNumber": "0123454417"},
+        )
+        client.post("/kyc/top-up", headers=auth, json={"amount": "200000"})
+        client.post("/kyc/withdraw", headers=auth, json={"amount": "20000"})
+
+        quote = client.post("/quotes", headers=auth, json={"amount": "50000"}).json()
+        client.post(
+            "/transfers",
+            headers=auth,
+            json={
+                "quoteId": quote["id"], "recipientName": "Mary Wanjiru",
+                "recipientMsisdn": "+254712345678",
+            },
+        )
+
+        feed = client.get("/activity", headers=auth).json()["activity"]
+        kinds = [row["type"] for row in feed]
+
+        assert set(kinds) == {"TOPUP", "WITHDRAWAL", "TRANSFER"}
+        # Newest first, so the transfer created last leads.
+        assert kinds[0] == "TRANSFER"
+        timestamps = [row["createdAt"] for row in feed]
+        assert timestamps == sorted(timestamps, reverse=True), "the feed must be chronological"
+
     def test_cannot_withdraw_more_than_the_balance(self, client):
         auth = self._session(client)
         client.post(

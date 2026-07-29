@@ -282,6 +282,27 @@ export type Transfer = {
   secondsRemaining?: number;
 };
 
+/** Money entering or leaving the naira wallet, as opposed to crossing a border. */
+export type WalletMovement = {
+  type: "TOPUP" | "WITHDRAWAL";
+  id: string;
+  createdAt: string;
+  amount: string;
+  currency: string;
+  reference: string;
+  sessionId: string;
+  balanceAfter: string;
+  counterparty: { institution: string; account: string };
+};
+
+/**
+ * One entry in the account's activity feed.
+ *
+ * Transfers and wallet movements interleaved: a history that showed only
+ * transfers left the balance changing for reasons it never explained.
+ */
+export type ActivityItem = ({ type: "TRANSFER" } & Transfer) | WalletMovement;
+
 export type SessionUser = {
   id: string;
   fullName: string;

@@ -349,6 +349,70 @@ def list_transfers(
     }
 
 
+@router.get("/activity")
+def activity(
+    user: User = Depends(current_user),
+    db: Session = Depends(get_session),
+    limit: int = Query(default=50, le=200),
+) -> dict:
+    """Everything that moved this wallet, newest first.
+
+    Transfers are not the whole story of an account: the money has to arrive
+    before it can be sent, and it can be taken back out again. A history that
+    lists only corridor transfers shows a balance changing for reasons it never
+    explains, so top-ups and withdrawals are interleaved here with the transfers
+    they fund.
+
+    One feed rather than two lists, because the question a person is asking is
+    "what happened to my money", and the answer is chronological.
+    """
+    from ..models import WalletMovement
+
+    transfers = (
+        db.execute(
+            select(Transaction)
+            .where(Transaction.senderId == user.id)
+            .order_by(Transaction.createdAt.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+    movements = (
+        db.execute(
+            select(WalletMovement)
+            .where(WalletMovement.userId == user.id)
+            .order_by(WalletMovement.createdAt.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+
+    items: list[dict] = [{"type": "TRANSFER", "at": t.createdAt, **_serialise(t)} for t in transfers]
+    items += [
+        {
+            "type": m.kind,
+            "at": m.createdAt,
+            "id": m.id,
+            "createdAt": m.createdAt.isoformat(),
+            "amount": str(m.amount),
+            "currency": m.currency,
+            "reference": m.reference,
+            "sessionId": m.sessionId,
+            "balanceAfter": str(m.balanceAfter),
+            "counterparty": {"institution": m.institution, "account": m.accountMasked},
+        }
+        for m in movements
+    ]
+
+    items.sort(key=lambda row: row["at"], reverse=True)
+    for row in items:
+        del row["at"]
+
+    return {"activity": items[:limit], "count": len(items[:limit])}
+
+
 @router.get("/transfers/export/statement.csv")
 def export_statement(
     user: User = Depends(current_user),

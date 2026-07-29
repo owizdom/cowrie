@@ -18,7 +18,7 @@ import { Avatar, Skeleton, cx } from "@/components/ui";
 import { TabBar } from "@/components/pay/tab-bar";
 import { InstallPrompt } from "@/components/pay/install";
 import { useRequireSession } from "@/components/pay/session";
-import { api, openSocket, type Transfer } from "@/lib/api";
+import { api, openSocket, type ActivityItem, type Transfer } from "@/lib/api";
 import {
   avatarTone,
   groupDigits,
@@ -31,16 +31,19 @@ import {
 
 export default function HomePage() {
   const { user, loading, refresh } = useRequireSession();
-  const [transfers, setTransfers] = useState<Transfer[] | null>(null);
+  const [activity, setActivity] = useState<ActivityItem[] | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const result = await api<{ transfers: Transfer[] }>("/transfers?limit=6", {
+      // The feed, not just transfers: a top-up moves the balance shown directly
+      // above this list, so leaving it out made the number change for no
+      // visible reason.
+      const result = await api<{ activity: ActivityItem[] }>("/activity?limit=6", {
         audience: "cowriepay",
       });
-      setTransfers(result.transfers);
+      setActivity(result.activity);
     } catch {
-      setTransfers([]);
+      setActivity([]);
     }
   }, []);
 
@@ -172,15 +175,15 @@ export default function HomePage() {
           </div>
 
           <ul className="mt-3 space-y-2">
-            {transfers === null ? (
+            {activity === null ? (
               <>
                 <Skeleton className="h-16 w-full rounded-card" />
                 <Skeleton className="h-16 w-full rounded-card" />
                 <Skeleton className="h-16 w-full rounded-card" />
               </>
-            ) : transfers.length === 0 ? (
+            ) : activity.length === 0 ? (
               <li className="card px-4 py-8 text-center">
-                <p className="text-sm font-semibold text-heading">No transfers yet</p>
+                <p className="text-sm font-semibold text-heading">Nothing yet</p>
                 <p className="mt-1 text-[13px] text-muted">
                   {Number(user.ngnBalance) > 0
                     ? "A transfer to Kenya takes about thirty seconds."
@@ -194,7 +197,13 @@ export default function HomePage() {
                 </Link>
               </li>
             ) : (
-              transfers.map((transfer) => <ActivityRow key={transfer.id} transfer={transfer} />)
+              activity.map((item) =>
+                item.type === "TRANSFER" ? (
+                  <ActivityRow key={item.id} transfer={item} />
+                ) : (
+                  <WalletRow key={item.id} item={item} />
+                ),
+              )
             )}
           </ul>
         </section>
@@ -240,6 +249,46 @@ function ActionKey({
       <span className="mt-2 text-[12px] font-medium text-muted" aria-hidden="true">
         {label}
       </span>
+    </li>
+  );
+}
+
+/** Money into or out of the wallet, rather than across the corridor. */
+function WalletRow({ item }: { item: Extract<ActivityItem, { type: "TOPUP" | "WITHDRAWAL" }> }) {
+  const incoming = item.type === "TOPUP";
+
+  return (
+    <li>
+      <div className="flex items-center gap-3 rounded-card border border-line bg-white px-3.5 py-3">
+        <span
+          className={cx(
+            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full",
+            incoming ? "bg-success-bg text-success" : "bg-canvas text-muted",
+          )}
+          aria-hidden="true"
+        >
+          {incoming ? <Plus className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />}
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-heading">
+            {incoming ? "Wallet top-up" : "Withdrawal to bank"}
+          </p>
+          <p className="truncate text-[12px] text-muted">
+            {item.counterparty.institution || "Linked bank"} · {relativeTime(item.createdAt)}
+          </p>
+        </div>
+
+        <p
+          className={cx(
+            "shrink-0 text-sm font-semibold tabular-nums",
+            incoming ? "text-success" : "text-heading",
+          )}
+        >
+          {incoming ? "+" : "−"}
+          {money(item.amount, "NGN", { decimals: false })}
+        </p>
+      </div>
     </li>
   );
 }

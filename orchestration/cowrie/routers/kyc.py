@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..enums import ActorType, KycIdType
-from ..models import KycSubmission, User
+from ..models import KycSubmission, User, WalletMovement
 from ..services import audit, kyc_service
 from .deps import current_user
 
@@ -213,6 +213,19 @@ async def top_up(
     before = audit.snapshot(user)
     user.ngnBalance += amount
 
+    # Recorded as a movement, not only as an audit entry: the account holder has
+    # to be able to see where the money came from.
+    movement = WalletMovement(
+        userId=user.id,
+        kind="TOPUP",
+        amount=amount,
+        reference=result.reference,
+        institution=user.bankName,
+        accountMasked=user.bankAccountMasked,
+        balanceAfter=user.ngnBalance,
+    )
+    db.add(movement)
+
     audit.record(
         db,
         entity_type="User",
@@ -286,6 +299,19 @@ async def withdraw(
         user.ngnBalance += amount
         db.commit()
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, result.failure_reason)
+
+    db.add(
+        WalletMovement(
+            userId=user.id,
+            kind="WITHDRAWAL",
+            amount=amount,
+            reference=result.reference,
+            sessionId=result.session_id,
+            institution=user.bankName,
+            accountMasked=user.bankAccountMasked,
+            balanceAfter=user.ngnBalance,
+        )
+    )
 
     audit.record(
         db,

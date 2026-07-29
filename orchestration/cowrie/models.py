@@ -770,6 +770,39 @@ class SanctionsScreening(Base):
     matchScore: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
 
 
+class WalletMovement(Base):
+    """Money entering or leaving a sender's naira wallet.
+
+    Not on the class diagram, and needed anyway: a top-up changed `ngnBalance`
+    and wrote an audit entry, which meant the balance moved with nothing the
+    account holder could see. A statement that shows transfers but not the
+    funding behind them does not reconcile, and "where did that money come
+    from" has no answer in the product.
+
+    Deliberately separate from Transaction. A top-up is not a corridor
+    movement: it has no recipient, no FX, no on-chain leg, and none of the
+    states in the transaction lifecycle apply to it. Forcing it through that
+    model would put rows into the settlement statistics that never settled.
+    """
+
+    __tablename__ = "wallet_movements"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    createdAt: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, index=True)
+    userId: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(12), index=True)
+    """TOPUP | WITHDRAWAL"""
+    amount: Mapped[Decimal] = mapped_column(MONEY)
+    currency: Mapped[str] = mapped_column(String(3), default="NGN")
+    reference: Mapped[str] = mapped_column(String(64), default="")
+    """The partner's reference - Mono's, on both legs."""
+    sessionId: Mapped[str] = mapped_column(String(64), default="")
+    """NIBSS session id on a withdrawal; the reference a bank statement shows."""
+    institution: Mapped[str] = mapped_column(String(80), default="")
+    accountMasked: Mapped[str] = mapped_column(String(32), default="")
+    balanceAfter: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+
+
 class Dispute(Base):
     """FR 5.2 - disputes appear in a review queue alongside KYC."""
 
