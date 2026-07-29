@@ -1,6 +1,6 @@
 {
   "packageId": "fun.cowrie.pay",
-  "host": "REPLACE_WITH_DEPLOYED_HOST",
+  "host": "cowrie-web-production.up.railway.app",
   "name": "CowriePay",
   "launcherName": "CowriePay",
   "display": "standalone",
@@ -8,8 +8,8 @@
   "navigationColor": "#7C3AED",
   "backgroundColor": "#F7F7FB",
   "startUrl": "/pay",
-  "iconUrl": "https://REPLACE_WITH_DEPLOYED_HOST/icon-512.png",
-  "maskableIconUrl": "https://REPLACE_WITH_DEPLOYED_HOST/icon-maskable.png",
+  "iconUrl": "https://cowrie-web-production.up.railway.app/icon-512.png",
+  "maskableIconUrl": "https://cowrie-web-production.up.railway.app/icon-maskable.png",
   "appVersionName": "1.0.0",
   "appVersionCode": 1,
   "shortcuts": [
