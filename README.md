@@ -133,14 +133,16 @@ downloads Python 3.12 itself if your system does not have it.
 make dev
 ```
 
-On first start it creates the database and seeds it — eight senders, five
-admins, about fifty historical transfers, a KYC queue, disputes, twelve months
-of reserve attestations, and a working API key. You will see:
+On first start it creates the database and provisions two things, and only two:
+the five console operators of SRS §2.3, and the OFAC/UN/EU lists that FR 1.3
+screens against. There is no sample dataset — no users, no transfers, no KYC
+submissions, no partner keys, no reserve history. Everything else arrives
+through the product, which is the only way to know the product works. You will
+see:
 
 ```
-[seed] Cowrie API sandbox key: ck_sandbox_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6
-[seed] CowriePay login: +2348012345678 / PIN 123456
-[seed] Admin login: amara@cowrie.demo / cowrie-demo
+[provision] 5 console operators, 6 sanctions entries
+[provision] console: amara@cowrie.demo / cowrie-demo
 [cowrie] chain: simulated - Base (simulated in-process)
 [cowrie] corridor: NGN -> KES
 ```
@@ -154,28 +156,51 @@ curl http://localhost:8000/health
 Then open the interactive API documentation at
 **http://localhost:8000/docs**.
 
-### Sign-in details for the demo
+### Getting into each surface
 
-| Surface | Credentials |
+Only the admin console has an account waiting for you. The other three are
+self-serve, because they are the sign-up flows the requirements describe and a
+seeded shortcut past them would leave FR 1.1 and FR 4.1 untested.
+
+| Surface | How you get in |
 |---|---|
-| **CowriePay** | phone `+2348012345678`, PIN `123456` |
-| **Admin console** | `amara@cowrie.demo` / `cowrie-demo` |
-| **Regulator portal** | regulator `SEC_NIGERIA`, access code `sec-ng-demo` |
-| **Cowrie API** | `X-API-Key: ck_sandbox_a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6` |
+| **Admin console** | `amara@cowrie.demo` / `cowrie-demo` — provisioned at first boot |
+| **CowriePay** | `POST /auth/register/start` → `POST /auth/register/verify` (FR 1.1). With no email provider configured the one-time code is returned in the response and shown on screen |
+| **Cowrie API** | `POST /v1/partners` returns a key pair. The secret is shown once |
+| **Regulator portal** | `POST /auth/regulator/register` with an email and password. Read-only by construction |
 
 Other admin roles, to see the RBAC refuse things: `kwame@cowrie.demo` (Officer),
 `zainab@cowrie.demo` (Reviewer), `david@cowrie.demo` (Engineer),
 `blessing@cowrie.demo` (Support). All use the password `cowrie-demo`.
 
+`GET /demo/config` returns the same map from the running service, so it cannot
+drift from this table without the test suite noticing.
+
 ### Send a transfer from the command line
 
 ```bash
-# 1. Sign in
-TOKEN=$(curl -s -X POST localhost:8000/auth/login \
+# 1. Create an account. The code is returned here because no email provider is
+#    configured; with one set up it is emailed and omitted from the response.
+START=$(curl -s -X POST localhost:8000/auth/register/start \
   -H 'Content-Type: application/json' \
-  -d '{"phone":"+2348012345678","pin":"123456"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+  -d '{"fullName":"Ada Okoro","phone":"+2348012345678","email":"ada@example.com","country":"NG","pin":"123456"}')
+CHALLENGE=$(echo "$START" | python3 -c 'import sys,json;print(json.load(sys.stdin)["challengeId"])')
+CODE=$(echo "$START" | python3 -c 'import sys,json;print(json.load(sys.stdin)["code"])')
 
-# 2. Get an itemised quote, locked for 60 seconds
+# 2. Verify it. Only now does a User row exist (FR 1.1).
+TOKEN=$(curl -s -X POST localhost:8000/auth/register/verify \
+  -H 'Content-Type: application/json' \
+  -d "{\"challengeId\":\"$CHALLENGE\",\"code\":\"$CODE\"}" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+
+# 3. Link a bank account and fund the wallet, so there is something to send.
+curl -s -X POST localhost:8000/kyc/link-account -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"kind":"BANK","institution":"Guaranty Trust Bank","accountNumber":"0123454417"}'
+curl -s -X POST localhost:8000/kyc/top-up -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"amount":"500000"}'
+
+# 4. Get an itemised quote, locked for 60 seconds
 curl -s -X POST localhost:8000/quotes -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"amount":"100000"}' | python3 -m json.tool
 ```
@@ -202,12 +227,12 @@ receives:
 Take the `id` from that response and confirm the transfer:
 
 ```bash
-# 3. Create it
+# 5. Create it
 curl -s -X POST localhost:8000/transfers -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"quoteId":"<paste the quote id>","recipientName":"Mary Wanjiru","recipientMsisdn":"+254712345678","scenario":"HAPPY"}'
 
-# 4. Confirm with the PIN, then watch it settle
+# 6. Confirm with the PIN, then watch it settle
 curl -s -X POST localhost:8000/transfers/<id>/confirm -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -d '{"pin":"123456"}'
 ```
@@ -259,7 +284,7 @@ reaches Base mainnet or Base Sepolia**, and no funded key exists.
 make test
 ```
 
-**46 Python tests** covering the requirements — the fee arithmetic, the state
+**55 Python tests** covering the requirements — the fee arithmetic, the state
 machine's refusal to make illegal moves, the settlement guarantee, the mint
 gate, the audit chain, and API idempotency.
 
@@ -293,7 +318,6 @@ cowrie/
 ├── surfaces/        Next.js — all six user interfaces
 ├── cusdc/           Foundry — cUSDC, cNGN, the bridge, the 3-of-5 treasury
 └── docs/
-    ├── TRACEABILITY.md     every requirement, mapped to its code
     └── uml/                the five analysis models
 ```
 
@@ -338,12 +362,12 @@ ATOKEN=$(curl -s -X POST localhost:8000/auth/admin/login -H 'Content-Type: appli
   -d '{"email":"amara@cowrie.demo","password":"cowrie-demo"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
 
 curl -s localhost:8000/admin/audit/verify -H "Authorization: Bearer $ATOKEN"
-# {"valid": true, "entriesChecked": 49, ...}
+# {"valid": true, "entriesChecked": 12, ...}   <- however many actions you have taken
 
-sqlite3 cowrie-demo.db "UPDATE audit_log SET action='tampered' WHERE seq=20;"
+sqlite3 cowrie-demo.db "UPDATE audit_log SET action='tampered' WHERE seq=2;"
 
 curl -s localhost:8000/admin/audit/verify -H "Authorization: Bearer $ATOKEN"
-# {"valid": false, "brokenAtSeq": 20, "reason": "entry contents do not match its recorded hash"}
+# {"valid": false, "brokenAtSeq": 2, "reason": "entry contents do not match its recorded hash"}
 ```
 
 It names the row. Deleting a row is caught the same way.
@@ -362,6 +386,33 @@ The same rule is enforced in the contract itself, where there is no plain
 `mint()` at all — only `mintWithAttestation`, and each attestation can be spent
 once.
 
+**The signed regulator report (FR 5.3).** The signature covers the CSV bytes, so
+you can check it the way a regulator would — recompute the hash from the file
+itself:
+
+```bash
+EXPORT=$(curl -s -X POST "localhost:8000/regulator/exports?regulator=SEC_NIGERIA&days=30" \
+  -H "Authorization: Bearer $ATOKEN")
+ID=$(echo "$EXPORT" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+
+curl -s "localhost:8000/regulator/exports/$ID/download" -H "Authorization: Bearer $ATOKEN" \
+  | python3 -c '
+import hashlib, sys
+doc = sys.stdin.read()
+body = "".join(l for l in doc.splitlines(keepends=True) if not l.startswith("#"))
+stated = [l for l in doc.splitlines() if l.startswith("# Content SHA-256:")][0].split(": ")[1]
+print("recomputed:", hashlib.sha256(body.encode()).hexdigest())
+print("stated    :", stated)
+print("match     :", hashlib.sha256(body.encode()).hexdigest() == stated)'
+# match     : True
+```
+
+The report is stored at the moment it is signed and served unchanged
+afterwards, so a transfer that settles later cannot quietly rewrite a document
+that has already been attested to. `GET /regulator/exports/{id}/verify` runs the
+same check server-side. Without a session, both endpoints return 401 — this is
+the pseudonymised transaction register, not a public file.
+
 ---
 
 ## Diagram reconciliation
@@ -378,12 +429,14 @@ in the docstring of `orchestration/cowrie/enums.py`.
 
 ## Requirements coverage
 
-`docs/TRACEABILITY.md` maps every functional requirement, every non-functional
-requirement, all 22 use cases, all 12 classes, all 24 sequence-diagram messages
-and every state transition to the code that implements it — including the five
-things this build deliberately does **not** do, and why.
+`GET /requirements` maps every functional and non-functional requirement to the
+module that implements it, served by the running system so it cannot go stale
+against a file nobody re-reads.
 
-The running service serves an abbreviated version at `GET /requirements`.
+Two of those mappings are executable rather than asserted:
+`GET /demo/state-machine` returns the transition table the code actually
+enforces, and `GET /health/performance` returns the NFR 1 latency budgets as
+measured over recent requests.
 
 ---
 
@@ -396,8 +449,10 @@ The running service serves an abbreviated version at `GET /requirements`.
 2. **No VASP licences.** NFR 4 asserts active SEC and CMA registration. That is
    a legal status, not a feature. The transparency page states the real
    position.
-3. **OpenTelemetry is not exported.** Timing spans are produced and logged, but
-   a local demo has no collector to send them to.
+3. **No OpenTelemetry collector is configured by default.** The exporter is
+   wired — set `COWRIE_OTEL_ENDPOINT` and spans ship over OTLP/HTTP, with
+   FastAPI and SQLAlchemy both instrumented. What a local demo lacks is
+   somewhere to send them, not the pipeline to do it.
 4. **One corridor.** NGN → KES only, which is the v1.0 scope in SRS §1.1.
 
 ---
@@ -408,7 +463,7 @@ The running service serves an abbreviated version at `GET /requirements`.
 |---|---|
 | **Interactive API** | http://localhost:8000/docs |
 | **OpenAPI 3.0** | http://localhost:8000/openapi.json |
-| **Requirements matrix** | [`docs/TRACEABILITY.md`](docs/TRACEABILITY.md) |
+| **Requirements map** | `GET /requirements` |
 | **UML analysis models** | [`docs/uml/`](docs/uml/) |
 | **Public disclosure** | `GET /transparency` |
 

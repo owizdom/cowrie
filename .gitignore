@@ -40,3 +40,6 @@ build/
 android/*.apk
 android/*.keystore
 android/app/
+
+# Requirements matrix (kept out of the repo)
+docs/TRACEABILITY.md

@@ -262,9 +262,12 @@ def health_performance() -> dict:
 def requirements() -> dict:
     """The requirement map, served by the running system.
 
-    Points at docs/TRACEABILITY.md, which is the full matrix. This endpoint
-    exists so the mapping is reachable from the deployed instance rather than
-    only from the repository.
+    Deliberately served rather than filed: a matrix in a document is a claim
+    about the code as it was on the day someone wrote it down, and this one is
+    at least reachable from the instance it describes. The two entries that
+    matter most are executable - GET /demo/state-machine returns the transition
+    table the code enforces, and GET /health/performance returns NFR 1 measured
+    rather than asserted.
     """
     return {
         "srs": "Cowrie SRS v1.0 - NGN to KES launch corridor",
@@ -291,5 +294,10 @@ def requirements() -> dict:
             "deployment": "docs/uml/cowrie_deployment.puml",
             "stateMachine": "11 states - GET /demo/state-machine",
         },
-        "fullMatrix": "docs/TRACEABILITY.md",
+        "executableMappings": {
+            "stateMachine": "GET /demo/state-machine - the enforced transition table",
+            "performance": "GET /health/performance - NFR 1 budgets, measured",
+            "auditChain": "GET /admin/audit/verify - NFR 5, verified on demand",
+            "disclosure": "GET /transparency - what is real and what is simulated",
+        },
     }

@@ -128,11 +128,35 @@ def demo_config() -> dict:
             "totalBps": settings.fx_spread_bps + settings.liquidity_spread_bps + settings.cowrie_fee_bps,
             "networkGasUsd": settings.network_gas_usd,
         },
-        "credentials": {
-            "note": "Seeded accounts. See the README.",
-            "cowriepay": {"phone": "+2348012345678", "pin": "123456"},
-            "admin": {"email": "amara@cowrie.demo", "password": "cowrie-demo"},
-            "regulator": {"regulator": "SEC_NIGERIA", "accessCode": "sec-ng-demo"},
+        "access": {
+            "note": (
+                "The database starts empty. Only the console operators and the "
+                "sanctions lists are provisioned at first boot; every other account "
+                "is created through the product."
+            ),
+            "admin": {
+                "provisioned": True,
+                "email": "amara@cowrie.demo",
+                "password": "cowrie-demo",
+                "otherRoles": [
+                    "kwame@cowrie.demo (Officer)",
+                    "zainab@cowrie.demo (Reviewer)",
+                    "david@cowrie.demo (Engineer)",
+                    "blessing@cowrie.demo (Support)",
+                ],
+            },
+            "cowriepay": {
+                "provisioned": False,
+                "howTo": "POST /auth/register/start then POST /auth/register/verify",
+            },
+            "partner": {
+                "provisioned": False,
+                "howTo": "POST /v1/partners returns a key pair, shown once",
+            },
+            "regulator": {
+                "provisioned": False,
+                "howTo": "POST /auth/regulator/register (email + password)",
+            },
         },
     }
 
