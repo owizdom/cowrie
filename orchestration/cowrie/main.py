@@ -31,7 +31,12 @@ from fastapi.responses import JSONResponse
 from .adapters.chain import get_chain
 from .config import settings
 from .db import init_db, session_scope
-from .middleware import RateLimitMiddleware, TimingMiddleware, performance
+from .middleware import (
+    QueryGuardMiddleware,
+    RateLimitMiddleware,
+    TimingMiddleware,
+    performance,
+)
 from .routers import admin, auth, demo, kyc, partner, regulator, support, transfers, transparency, ws
 from .services import transfer_service, webhooks
 from .services.sanctions import service as sanctions_service
@@ -164,9 +169,13 @@ app = FastAPI(
     ],
 )
 
-# Order matters: timing wraps rate limiting, so a 429 is still measured.
+# Order matters. Middleware added last runs first, so this reads outside-in as:
+# timing -> rate limit -> query guard. Timing is outermost so a 429 and a
+# rejected query string are both still measured; the guard is innermost of the
+# three so it only screens requests that were going to reach a route anyway.
 app.add_middleware(TimingMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(QueryGuardMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -197,6 +206,38 @@ app.include_router(ws.router)
 # the scenario switch rather than leaving it reachable in a real deployment.
 if settings.environment == "demo":
     app.include_router(demo.router)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request, exc: Exception) -> JSONResponse:
+    """Answer an unexpected failure in the shape the rest of the API uses.
+
+    Starlette's default turns an unhandled exception into bare `text/plain`
+    "Internal Server Error" and drops the `X-Trace-Id` header that every other
+    response carries - so the one response a caller most needs to report, and
+    the one an operator most needs to find in the logs, was the only response
+    with neither a machine-readable body nor a correlation id.
+
+    The traceback still goes to stderr; nothing about the cause is hidden from
+    the operator, and nothing about it is leaked to the caller.
+    """
+    import traceback
+
+    trace_id = getattr(request.state, "trace_id", "unknown")
+    print(f"[error] unhandled exception trace={trace_id}: {exc!r}")
+    traceback.print_exc()
+
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "type": "internal_error",
+                "message": "The request could not be completed. Quote the trace id if you report this.",
+                "traceId": trace_id,
+            }
+        },
+        headers={"X-Trace-Id": trace_id},
+    )
 
 
 @app.get("/", tags=["meta"])

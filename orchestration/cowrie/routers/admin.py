@@ -45,6 +45,7 @@ from ..models import (
     User,
     utcnow,
 )
+from ..money import MoneyAmount, parse_amount
 from ..services import audit, kyc_service, monitoring, reserve_service
 from .deps import require_role
 
@@ -127,7 +128,7 @@ def transactions(
     corridor: str | None = Query(default=None, description="e.g. NGN->KES"),
     minUsd: float | None = Query(default=None, description="Transaction size filter"),
     risk: RiskLevel | None = Query(default=None, description="Risk score filter"),
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, ge=1, le=500),
 ) -> dict:
     """Live transaction feed with the four filter chips (FR 5.1, SRS §3.1)."""
     stmt = select(Transaction).order_by(Transaction.createdAt.desc()).limit(limit)
@@ -465,7 +466,7 @@ def users(
 
 
 class MintRequest(BaseModel):
-    amount: str
+    amount: MoneyAmount
     usdDepositReference: str = Field(
         default="", description="Banking partner's confirmation of the matching USD deposit"
     )
@@ -473,7 +474,7 @@ class MintRequest(BaseModel):
 
 
 class BurnRequest(BaseModel):
-    amount: str
+    amount: MoneyAmount
     approvals: int = 3
 
 
@@ -502,7 +503,7 @@ async def mint(
     try:
         movement = await reserve_service.mint(
             db,
-            amount=Decimal(body.amount),
+            amount=parse_amount(body.amount),
             usd_deposit_reference=body.usdDepositReference,
             performed_by=admin.email,
             approvals=body.approvals,
@@ -529,7 +530,7 @@ async def burn(
     try:
         movement = await reserve_service.burn(
             db,
-            amount=Decimal(body.amount),
+            amount=parse_amount(body.amount),
             performed_by=admin.email,
             approvals=body.approvals,
         )
@@ -606,7 +607,7 @@ async def reconcile(
 def audit_log(
     admin: AdminUser = Depends(require_role(AdminRole.SUPPORT)),
     db: Session = Depends(get_session),
-    limit: int = Query(default=100, le=1000),
+    limit: int = Query(default=100, ge=1, le=1000),
     entityType: str | None = None,
 ) -> dict:
     stmt = select(AuditLogEntry).order_by(AuditLogEntry.seq.desc()).limit(limit)
@@ -665,7 +666,7 @@ async def anchor_audit(
 def sanctions_watch(
     admin: AdminUser = Depends(require_role(AdminRole.SUPPORT)),
     db: Session = Depends(get_session),
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, ge=1, le=500),
 ) -> dict:
     rows = (
         db.execute(

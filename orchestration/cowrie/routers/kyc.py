@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from ..db import get_session
 from ..enums import ActorType, KycIdType
 from ..models import KycSubmission, User, WalletMovement
+from ..money import MoneyAmount, parse_amount
 from ..services import audit, kyc_service
 from .deps import current_user
 
@@ -171,7 +172,7 @@ def link_account(
 
 
 class TopUpRequest(BaseModel):
-    amount: str = Field(description="Amount in NGN")
+    amount: MoneyAmount = Field(description="Amount in NGN")
 
 
 @router.post("/top-up")
@@ -186,8 +187,6 @@ async def top_up(
     action so an account can hold a balance before sending. A wallet cannot be
     funded without a linked account, which is why linking comes first.
     """
-    from decimal import Decimal, InvalidOperation
-
     from ..adapters.mono import MonoAdapter
 
     if not user.bankName:
@@ -197,12 +196,9 @@ async def top_up(
         )
 
     try:
-        amount = Decimal(body.amount)
-    except InvalidOperation as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Amount must be a number.") from exc
-
-    if amount <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Amount must be positive.")
+        amount = parse_amount(body.amount)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
     result = await MonoAdapter().debit(
         user_id=user.id, amount=amount, narration="CowriePay wallet top-up"
@@ -262,8 +258,6 @@ async def withdraw(
     Debited before the payout is attempted and restored if it fails, so a
     rejected disbursement cannot leave the money in neither place.
     """
-    from decimal import Decimal, InvalidOperation
-
     from ..adapters.mono import MonoAdapter
 
     if not user.bankName:
@@ -273,12 +267,9 @@ async def withdraw(
         )
 
     try:
-        amount = Decimal(body.amount)
-    except InvalidOperation as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Amount must be a number.") from exc
-
-    if amount <= 0:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Amount must be positive.")
+        amount = parse_amount(body.amount)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     if amount > user.ngnBalance:
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED,

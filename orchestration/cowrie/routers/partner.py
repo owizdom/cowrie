@@ -21,7 +21,7 @@ so two concurrent identical requests cannot both succeed.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
@@ -32,6 +32,7 @@ from ..config import settings
 from ..db import get_session
 from ..enums import ActorType, DemoScenario, IntentStatus, TransactionState, WebhookStatus
 from ..models import ApiKey, PaymentIntent, Transaction, User, Webhook
+from ..money import MoneyAmount, parse_amount
 from ..security import generate_key_pair, generate_webhook_secret, hash_secret
 from ..services import audit, transfer_service, webhooks
 from ..services.quote_engine import engine as quote_engine
@@ -54,7 +55,7 @@ class PaymentIntentRequest(BaseModel):
 
     sourceCurrency: str = Field(default="NGN", min_length=3, max_length=3)
     destinationCurrency: str = Field(default="KES", min_length=3, max_length=3)
-    amount: str = Field(description="Amount in the source currency, as a decimal string")
+    amount: MoneyAmount = Field(description="Amount in the source currency, as a decimal string")
     recipientName: str = Field(min_length=2, max_length=160)
     recipientMsisdn: str = Field(min_length=9, max_length=24)
     reference: str = Field(default="", max_length=120, description="Your own reference")
@@ -64,16 +65,6 @@ class PaymentIntentRequest(BaseModel):
     @classmethod
     def _upper(cls, v: str) -> str:
         return v.upper()
-
-    @field_validator("amount")
-    @classmethod
-    def _positive(cls, v: str) -> str:
-        try:
-            if Decimal(v) <= 0:
-                raise ValueError
-        except (InvalidOperation, ValueError) as exc:
-            raise ValueError("amount must be a positive decimal string") from exc
-        return v
 
 
 class WebhookRequest(BaseModel):
@@ -168,7 +159,7 @@ async def create_payment_intent(
             "live in v1.0. Other corridors ship with v2.0 (SRS 1.1).",
         )
 
-    amount = Decimal(body.amount)
+    amount = parse_amount(body.amount)
     try:
         quote = quote_engine.quote(source_amount=amount)
     except ValueError as exc:
@@ -299,7 +290,7 @@ def get_payment_intent(
 def list_payment_intents(
     key: ApiKey = Depends(require_scope("payments:read")),
     db: Session = Depends(get_session),
-    limit: int = Query(default=25, le=100),
+    limit: int = Query(default=25, ge=1, le=100),
     status_filter: IntentStatus | None = Query(default=None, alias="status"),
 ) -> dict:
     stmt = (
@@ -333,8 +324,8 @@ def api_quote(
     key: ApiKey = Depends(require_scope("payments:read")),
 ) -> dict:
     try:
-        return quote_engine.quote(source_amount=Decimal(amount)).as_dict()
-    except (ValueError, InvalidOperation) as exc:
+        return quote_engine.quote(source_amount=parse_amount(amount)).as_dict()
+    except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
 
@@ -346,9 +337,9 @@ def api_reverse_quote(
     """Price backwards from the payout amount - the common institutional case."""
     try:
         return quote_engine.quote_for_destination(
-            destination_amount=Decimal(destinationAmount)
+            destination_amount=parse_amount(destinationAmount)
         ).as_dict()
-    except (ValueError, InvalidOperation) as exc:
+    except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
 
@@ -361,7 +352,7 @@ def api_reverse_quote(
 def transaction_stats(
     key: ApiKey = Depends(require_scope("payments:read")),
     db: Session = Depends(get_session),
-    days: int = Query(default=30, le=365),
+    days: int = Query(default=30, ge=1, le=365),
 ) -> dict:
     """Volume, settlement rate, latency and cost for this partner."""
     since = datetime.now(UTC) - timedelta(days=days)
@@ -523,7 +514,7 @@ async def test_webhook(
 def webhook_deliveries(
     key: ApiKey = Depends(require_scope("payments:read")),
     db: Session = Depends(get_session),
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     return {"data": webhooks.history(db, partner_id=key.partnerId, limit=limit)}
 

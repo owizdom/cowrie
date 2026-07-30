@@ -21,7 +21,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -33,6 +33,7 @@ from ..config import settings
 from ..db import get_session
 from ..enums import IN_FLIGHT_STATES, DemoScenario, TransactionState
 from ..models import Transaction, User
+from ..money import MoneyAmount, parse_amount
 from ..services import transfer_service
 from ..services.otp import requires_step_up
 from ..services.otp import service as otp_service
@@ -54,20 +55,7 @@ _quotes: dict[str, Quote] = {}
 
 
 class QuoteRequest(BaseModel):
-    amount: str = Field(description="Amount in NGN, as a decimal string")
-
-    @field_validator("amount")
-    @classmethod
-    def _decimal(cls, v: str) -> str:
-        try:
-            value = Decimal(v)
-        except InvalidOperation as exc:
-            raise ValueError("amount must be a number") from exc
-        if value <= 0:
-            raise ValueError("amount must be positive")
-        if value > Decimal("50000000"):
-            raise ValueError("amount exceeds the corridor maximum")
-        return v
+    amount: MoneyAmount = Field(description="Amount in NGN, as a decimal string")
 
 
 class CreateTransfer(BaseModel):
@@ -147,7 +135,7 @@ def create_quote(body: QuoteRequest, user: User = Depends(current_user)) -> dict
     bundles them, because NFR 6 forbids it.
     """
     try:
-        quote = quote_engine.quote(source_amount=Decimal(body.amount))
+        quote = quote_engine.quote(source_amount=parse_amount(body.amount))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
@@ -322,7 +310,7 @@ def list_transfers(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
     state: TransactionState | None = None,
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     """Transaction history (SRS §2.2, "check history")."""
     stmt = (
@@ -353,7 +341,7 @@ def list_transfers(
 def activity(
     user: User = Depends(current_user),
     db: Session = Depends(get_session),
-    limit: int = Query(default=50, le=200),
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> dict:
     """Everything that moved this wallet, newest first.
 

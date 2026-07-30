@@ -888,13 +888,13 @@ def _admin_token(client, db, role) -> str:
     return response.json()["token"]
 
 
-def _regulator_token(client) -> str:
+def _regulator_token(client, regulator: str = "SEC_NIGERIA") -> str:
     response = client.post(
         "/auth/regulator/register",
         json={
-            "fullName": "Ada Regulator",
-            "email": "ada@sec.example.com",
-            "regulator": "SEC_NIGERIA",
+            "fullName": f"Auditor {regulator}",
+            "email": f"{regulator.lower()}@regulators.example.com",
+            "regulator": regulator,
             "password": "regulator-demo",
         },
     )
@@ -949,6 +949,61 @@ class TestRegulatorExport:
         regulator = _regulator_token(client)
         assert client.get(url, headers={"Authorization": f"Bearer {regulator}"}).status_code == 200
         assert client.get(url, headers={"Authorization": f"Bearer {officer}"}).status_code == 200
+
+    def test_fr53_a_regulator_cannot_read_another_jurisdictions_export(self, client, db, user):
+        """One country's filing history is not another country's business.
+
+        The export download was authenticated but never scoped, so a CMA_KENYA
+        session could read a report addressed to the Nigeria SEC. Verified live
+        before the fix: HTTP 200 and the full pseudonymised register.
+        """
+        from cowrie.enums import AdminRole
+
+        _one_transaction(db, user)
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        export = _generate_export(client, officer)  # regulator=SEC_NIGERIA
+
+        kenya = {"Authorization": f"Bearer {_regulator_token(client, 'CMA_KENYA')}"}
+
+        # 404 rather than 403: a 403 would confirm the report exists.
+        assert client.get(export["downloadUrl"], headers=kenya).status_code == 404
+        assert client.get(export["verifyUrl"], headers=kenya).status_code == 404
+
+        # And it must not be enumerable either.
+        listed = client.get("/regulator/exports", headers=kenya).json()["exports"]
+        assert all(row["id"] != export["id"] for row in listed)
+        assert all(row["regulator"] == "CMA_KENYA" for row in listed)
+
+    def test_fr53_the_addressed_regulator_can_read_its_own_export(self, client, db, user):
+        """Scoping must not lock out the body the report is addressed to."""
+        from cowrie.enums import AdminRole
+
+        _one_transaction(db, user)
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        export = _generate_export(client, officer)
+
+        sec = {"Authorization": f"Bearer {_regulator_token(client, 'SEC_NIGERIA')}"}
+        assert client.get(export["downloadUrl"], headers=sec).status_code == 200
+        assert client.get(export["verifyUrl"], headers=sec).json()["matches"] is True
+        assert any(
+            row["id"] == export["id"]
+            for row in client.get("/regulator/exports", headers=sec).json()["exports"]
+        )
+
+    def test_fr53_an_officer_still_reads_any_export(self, client, db, user):
+        """The admin who generates reports keeps sight of all of them (SRS 2.3)."""
+        from cowrie.enums import AdminRole
+
+        _one_transaction(db, user)
+        officer = _admin_token(client, db, AdminRole.OFFICER)
+        auth = {"Authorization": f"Bearer {officer}"}
+        export = _generate_export(client, officer)
+
+        assert client.get(export["downloadUrl"], headers=auth).status_code == 200
+        assert any(
+            row["id"] == export["id"]
+            for row in client.get("/regulator/exports", headers=auth).json()["exports"]
+        )
 
     def test_fr53_support_role_cannot_download_an_export(self, client, db):
         """RBAC is not bypassed by holding any admin token."""
@@ -1113,6 +1168,134 @@ class TestDemoCredentials:
             assert response.status_code == 200, (
                 f"/demo/config advertises {entry['email']}, which does not authenticate"
             )
+
+
+# ---------------------------------------------------------------------------
+# Input hardening - a client mistake must never read as a server failure
+# ---------------------------------------------------------------------------
+
+
+#: Every spelling of a value that Decimal accepts but a ledger cannot hold.
+#: `Decimal("NaN")` parses without raising and only throws on comparison, which
+#: is why these reached a 500 rather than a 4xx.
+NON_FINITE = ["NaN", "nan", "-NaN", "sNaN", "Infinity", "-Infinity", "1e999"]
+
+
+class TestInputHardening:
+    def _consumer(self, client) -> dict:
+        start = client.post(
+            "/auth/register/start",
+            json={
+                "fullName": "Edge Case", "phone": "+2348055500001",
+                "email": "edge@example.com", "country": "NG", "pin": "123456",
+            },
+        ).json()
+        token = client.post(
+            "/auth/register/verify",
+            json={"challengeId": start["challengeId"], "code": start["code"]},
+        ).json()["token"]
+        auth = {"Authorization": f"Bearer {token}"}
+        client.post(
+            "/kyc/link-account",
+            headers=auth,
+            json={"kind": "BANK", "institution": "GTB", "accountNumber": "0123454417"},
+        )
+        client.post("/kyc/top-up", headers=auth, json={"amount": "100000"})
+        return auth
+
+    @pytest.mark.parametrize("amount", NON_FINITE)
+    def test_non_finite_amounts_never_cause_a_server_error(self, client, db, amount):
+        """NaN and the infinities are refused on every endpoint that takes money."""
+        from cowrie.enums import AdminRole
+
+        auth = self._consumer(client)
+        engineer = {"Authorization": f"Bearer {_admin_token(client, db, AdminRole.ENGINEER)}"}
+        key = _api_key(db)
+
+        cases = [
+            ("/quotes", auth, {"amount": amount}),
+            ("/kyc/top-up", auth, {"amount": amount}),
+            ("/kyc/withdraw", auth, {"amount": amount}),
+            ("/admin/reserve/mint", engineer, {"amount": amount, "usdDepositReference": "W-1"}),
+            ("/admin/reserve/burn", engineer, {"amount": amount}),
+        ]
+        for path, headers, body in cases:
+            response = client.post(path, headers=headers, json=body)
+            assert 400 <= response.status_code < 500, (
+                f"{path} answered {response.status_code} for amount={amount!r}; "
+                "a malformed amount is the caller's mistake, not a server failure"
+            )
+
+        # Partner surface takes its amount the same way.
+        response = client.post(
+            "/v1/payment_intents",
+            headers={"X-API-Key": key, "Idempotency-Key": f"nonfinite-{amount}"},
+            json={
+                "amount": amount, "recipientName": "Mary Wanjiru",
+                "recipientMsisdn": "+254712345678",
+            },
+        )
+        assert 400 <= response.status_code < 500
+
+        # And as a query parameter.
+        assert 400 <= client.get(f"/v1/quotes?amount={amount}", headers={"X-API-Key": key}).status_code < 500
+
+    def test_a_leaked_exception_class_is_not_an_error_message(self, client, db):
+        """`{"detail":"[<class 'decimal.InvalidOperation'>]"}` is not a message."""
+        key = _api_key(db)
+        body = client.get("/v1/quotes?amount=NaN", headers={"X-API-Key": key}).text
+        assert "InvalidOperation" not in body
+        assert "class" not in body
+
+    def test_negative_paging_is_refused(self, client, db, user):
+        """A negative LIMIT reached Postgres and answered 500."""
+        from cowrie.enums import AdminRole
+
+        auth = self._consumer(client)
+        admin = {"Authorization": f"Bearer {_admin_token(client, db, AdminRole.ADMIN)}"}
+        key = {"X-API-Key": _api_key(db)}
+
+        for path, headers in [
+            ("/transfers?limit=-1", auth),
+            ("/activity?limit=-1", auth),
+            ("/admin/transactions?limit=-1", admin),
+            ("/admin/audit?limit=-5", admin),
+            ("/admin/sanctions?limit=-1", admin),
+            ("/v1/payment_intents?limit=-1", key),
+            ("/v1/webhooks/deliveries?limit=-1", key),
+        ]:
+            response = client.get(path, headers=headers)
+            assert response.status_code == 422, (
+                f"{path} answered {response.status_code}, expected 422"
+            )
+
+    def test_a_negative_window_is_refused(self, client, db):
+        """A negative `days` silently inverted the period instead of failing."""
+        from cowrie.enums import AdminRole
+
+        officer = {"Authorization": f"Bearer {_admin_token(client, db, AdminRole.OFFICER)}"}
+        assert client.post(
+            "/regulator/exports?regulator=SEC_NIGERIA&days=-30", headers=officer
+        ).status_code == 422
+        assert client.get(
+            "/v1/stats?days=-1", headers={"X-API-Key": _api_key(db)}
+        ).status_code == 422
+
+    def test_a_null_byte_in_a_query_parameter_is_refused(self, client, db):
+        """Postgres cannot store NUL, so it must not reach the driver."""
+        from cowrie.enums import AdminRole
+
+        admin = {"Authorization": f"Bearer {_admin_token(client, db, AdminRole.ADMIN)}"}
+        response = client.get("/admin/audit?entityType=%00", headers=admin)
+        assert response.status_code == 400
+        assert response.json()["error"]["type"] == "invalid_request"
+
+    def test_an_error_response_carries_the_json_envelope(self, client):
+        """The 400 shape matches what the rest of the API returns."""
+        response = client.get("/corridor?x=%00")
+        assert response.status_code == 400
+        assert "error" in response.json()
+        assert {"type", "message"} <= set(response.json()["error"])
 
 
 class TestCache:

@@ -114,6 +114,10 @@ performance = PerformanceLog()
 class TimingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         trace_id = request.headers.get("x-trace-id") or uuid.uuid4().hex[:16]
+        # Stashed before the call, not after: if the route raises, this middleware
+        # never reaches the response and the id would be lost exactly when someone
+        # needs it to find the failure. The error handler in main.py reads it here.
+        request.state.trace_id = trace_id
         started = time.perf_counter()
 
         response = await call_next(request)

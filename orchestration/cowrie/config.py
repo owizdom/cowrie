@@ -131,10 +131,28 @@ class Settings(BaseSettings):
     chain_id: int = 8453
     """Base mainnet chain id, used as a label only in simulated mode."""
 
-    # Addresses shown in the UI.  These are the addresses recorded in SRS 2.4;
-    # in this build they are labels on simulated records, not live contracts.
+    # Addresses shown in the UI. In this build they are labels on simulated
+    # records, not live contracts - nothing here is deployed (SRS 2.5).
+    #
+    # SRS 2.4 records two addresses for cUSDC, one per network. Both are kept
+    # under the names the SRS gives them. An earlier version of this file used
+    # the Sepolia address as `cngn_address`, which published it as a different
+    # asset entirely.
     cusdc_address: str = "0x46C85152bFe9f96829aA94755D9f915F9B10EF5F"
-    cngn_address: str = "0xe2387F04d3858e7Cb64Ef5Ed6617f9B2fcEEAfa2"
+    """Base mainnet, per SRS 2.4."""
+    cusdc_sepolia_address: str = "0xe2387F04d3858e7Cb64Ef5Ed6617f9B2fcEEAfa2"
+    """Base Sepolia, per SRS 2.4."""
+
+    cngn_address: str = ""
+    """Deliberately empty.
+
+    cNGN is issued by the Africa Stablecoin Consortium under the Nigeria SEC
+    sandbox, not by Cowrie, and the SRS does not record its address. Publishing
+    a guess - or borrowing one of Cowrie's own - would misattribute a third
+    party's contract on a page whose entire purpose is that its figures can be
+    trusted. `/transparency` says the address is not published instead.
+    """
+
     bridge_address: str = "0x9A6f3C1B0e5D2A874fE13b09C7D4a5E86F2B0c31"
 
     # ---- demo ------------------------------------------------------------

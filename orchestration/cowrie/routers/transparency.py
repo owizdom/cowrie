@@ -109,7 +109,16 @@ async def transparency(db: Session = Depends(get_session)) -> dict:
         # 5. contract addresses
         "contracts": {
             "cUSDC": health.get("addresses", {}).get("CUSDC") or settings.cusdc_address,
-            "cNGN": health.get("addresses", {}).get("CNGN") or settings.cngn_address,
+            "cUSDCSepolia": settings.cusdc_sepolia_address,
+            # cNGN belongs to the Africa Stablecoin Consortium, not to Cowrie.
+            # On a local chain there is a mock deployment worth showing; there is
+            # no address to publish for the real one, and inventing one would
+            # misattribute somebody else's contract.
+            "cNGN": (
+                health.get("addresses", {}).get("CNGN")
+                or settings.cngn_address
+                or "Not published - cNGN is issued by the Africa Stablecoin Consortium"
+            ),
             "CowrieBridge": health.get("addresses", {}).get("CowrieBridge") or settings.bridge_address,
             "network": health["network"],
             "chainMode": health["mode"],

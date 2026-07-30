@@ -33,6 +33,20 @@ export row. Two things follow, and both are the point:
     time would let a transfer that was in flight at signing appear later with a
     different state, a settledAt and an M-Pesa receipt - the same period, a
     different document, one hash. The stored body is served verbatim instead.
+
+Who may read what
+-----------------
+Exports are scoped to the body they are addressed to: a CMA_KENYA session cannot
+read a SEC_NIGERIA report. That check is in `_load_export`, so it covers the
+download and the verification together.
+
+The transaction register, the reserve view and the audit proof are deliberately
+*not* scoped that way, and the asymmetry is intentional rather than an oversight.
+There is one corridor, NGN to KES, and both the SEC and the CMA are party to
+every transaction that crosses it - a per-regulator slice of that register would
+be the same rows under a different heading. An export is different because each
+one is a document *addressed to* a named body and signed as such, and one
+country's filing history is not another country's business.
 """
 
 from __future__ import annotations
@@ -160,7 +174,7 @@ def profile(session: dict = Depends(current_regulator)) -> dict:
 def regulator_transactions(
     session: dict = Depends(current_regulator),
     db: Session = Depends(get_session),
-    days: int = Query(default=30, le=365),
+    days: int = Query(default=30, ge=1, le=365),
 ) -> dict:
     """Read-only transaction view, pseudonymised."""
     end = datetime.now(UTC)
@@ -210,7 +224,7 @@ def regulator_audit(
 @router.post("/exports")
 def generate_export(
     regulator: str = Query(default="SEC_NIGERIA"),
-    days: int = Query(default=30, le=365),
+    days: int = Query(default=30, ge=1, le=365),
     admin: AdminUser = Depends(require_role(AdminRole.OFFICER)),
     db: Session = Depends(get_session),
 ) -> dict:
@@ -287,12 +301,21 @@ def generate_export(
 
 
 @router.get("/exports")
-def list_exports(db: Session = Depends(get_session), session: dict = Depends(current_regulator)) -> dict:
-    rows = (
-        db.execute(select(RegulatorExport).order_by(RegulatorExport.createdAt.desc()).limit(50))
-        .scalars()
-        .all()
-    )
+def list_exports(
+    db: Session = Depends(get_session),
+    session: dict = Depends(regulator_or_officer),
+) -> dict:
+    """Previously generated reports the caller is entitled to see.
+
+    Scoped to the caller's own body for a regulator session. The session was
+    already being injected here and simply not read, so one jurisdiction could
+    enumerate another's filings.
+    """
+    stmt = select(RegulatorExport).order_by(RegulatorExport.createdAt.desc()).limit(50)
+    if session.get("kind") == "regulator":
+        stmt = stmt.where(RegulatorExport.regulator == session.get("regulator"))
+
+    rows = db.execute(stmt).scalars().all()
     return {
         "exports": [
             {
@@ -314,10 +337,26 @@ def list_exports(db: Session = Depends(get_session), session: dict = Depends(cur
     }
 
 
-def _load_export(db: Session, export_id: str) -> RegulatorExport:
+def _load_export(db: Session, export_id: str, session: dict) -> RegulatorExport:
+    """Fetch an export the caller is entitled to read, or 404.
+
+    The tenancy check lives here rather than in each route because this function
+    backs both the download and the verification, and a guard that has to be
+    remembered twice is a guard that will be forgotten once.
+
+    A regulator sees the reports addressed to its own body and nothing else. The
+    refusal is 404 and not 403 on purpose: 403 would confirm that a report exists
+    at that id for another jurisdiction, which is itself a disclosure about a
+    country's filing activity. An Officer-and-above admin reads any of them -
+    they are the ones who generate them (SRS 2.3).
+    """
     record = db.get(RegulatorExport, export_id)
     if record is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Export not found")
+
+    if session.get("kind") == "regulator" and record.regulator != session.get("regulator"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Export not found")
+
     return record
 
 
@@ -357,7 +396,7 @@ def download_export(
     The body is the one that was signed, served verbatim - see the module
     docstring for why it is not re-derived here.
     """
-    record = _load_export(db, export_id)
+    record = _load_export(db, export_id, session)
     body, assurance = _export_body(record, db)
 
     buffer = io.StringIO()
@@ -396,7 +435,7 @@ def verify_export(
     altered, a signature mismatch means the report was signed by something other
     than this platform key.
     """
-    record = _load_export(db, export_id)
+    record = _load_export(db, export_id, session)
     body, assurance = _export_body(record, db)
 
     recomputed = sha256_hex(body)
