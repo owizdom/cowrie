@@ -117,7 +117,8 @@ cd cowrie
 make setup && make dev
 ```
 
-Open **http://localhost:8000/docs**.
+Open **http://localhost:8000/docs**. For the six web interfaces, run
+`make web` in a second terminal and open **http://localhost:3000**.
 
 ### Step by step
 
@@ -143,8 +144,10 @@ make setup
 ```
 
 This creates a Python 3.12 virtual environment in `orchestration/.venv`,
-installs the API, and installs the Foundry libraries if `forge` is present. uv
-downloads Python 3.12 itself if your system does not have it.
+installs the API, installs the web surfaces with npm, and installs the Foundry
+libraries if `forge` is present. uv downloads Python 3.12 itself if your system
+does not have it. Node and Foundry are both optional — each step reports that it
+was skipped rather than failing, and `make setup` is safe to re-run.
 
 **4. Start the API**
 
