@@ -361,6 +361,53 @@ class TestAuditLog:
 
         assert not audit.verify_chain(db)["valid"]
 
+    def test_nfr5_concurrent_appends_all_land(self, user):
+        """A hash chain is serial, so simultaneous writers contend for `seq`.
+
+        Measured before the retry loop: 12 simultaneous appends produced 5
+        successes and 7 IntegrityErrors, each surfacing to its caller as a 500 on
+        a request that was perfectly valid. The constraint protected the chain,
+        so this was never corruption - just a lost write.
+        """
+        import threading
+
+        from cowrie.db import SessionLocal
+
+        failures: list[str] = []
+        landed: list[int] = []
+
+        def append(n: int) -> None:
+            session = SessionLocal()
+            try:
+                audit.record(
+                    session, entity_type="User", entity_id=f"u{n}",
+                    action=f"concurrent.{n}", actor=ActorType.SYSTEM, after={"n": n},
+                )
+                session.commit()
+                landed.append(n)
+            except Exception as exc:  # noqa: BLE001 - the point is to catch any
+                failures.append(f"{type(exc).__name__}: {exc}")
+            finally:
+                session.close()
+
+        threads = [threading.Thread(target=append, args=(i,)) for i in range(12)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        assert not failures, f"concurrent appends failed: {failures[:3]}"
+        assert len(landed) == 12
+
+        # And the whole point of the constraint: the chain is still intact.
+        verifier = SessionLocal()
+        try:
+            result = audit.verify_chain(verifier)
+            assert result["valid"], result["reason"]
+            assert result["entriesChecked"] >= 12
+        finally:
+            verifier.close()
+
     def test_nfr5_secrets_never_enter_the_log(self, db, user):
         """The log must not become a second copy of the credentials."""
         snapshot = audit.snapshot(user)

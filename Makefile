@@ -2,7 +2,8 @@
 #
 # The short version:
 #   make setup     install everything
-#   make dev       run the API (and the app, once the surfaces layer is in)
+#   make dev       run the API on :8000
+#   make web       run the six web surfaces on :3000
 #   make test      run every test suite
 #
 # Nothing here talks to a production system. The database is local, the chain is
@@ -27,9 +28,11 @@ help: ## Show this help
 # ---------------------------------------------------------------------------
 
 .PHONY: setup
-setup: setup-api setup-contracts ## Install all dependencies
+setup: setup-api setup-web setup-contracts ## Install all dependencies
 	@echo ""
-	@echo "Setup complete. Start with:  make dev"
+	@echo "Setup complete."
+	@echo "  make dev   the API on :8000"
+	@echo "  make web   the six interfaces on :3000 (second terminal)"
 
 .PHONY: setup-api
 setup-api: ## Install the Python orchestration tier
@@ -37,16 +40,37 @@ setup-api: ## Install the Python orchestration tier
 		echo "uv is not installed. Install it with:"; \
 		echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"; \
 		exit 1; }
-	cd $(ORCHESTRATION) && uv venv --python 3.12 && uv pip install -e ".[dev]"
+# Re-runnable on purpose: `uv venv` errors if .venv already exists, so a second
+# `make setup` used to fail with "A virtual environment already exists".
+	@cd $(ORCHESTRATION) && { [ -d .venv ] || uv venv --python 3.12; } && uv pip install -e ".[dev]"
 
+.PHONY: setup-web
+setup-web: ## Install the Next.js surfaces
+	@if command -v npm >/dev/null 2>&1; then \
+		cd $(SURFACES) && npm install; \
+	else \
+		echo "Node 20+ is not installed - skipping the web surfaces (https://nodejs.org)."; \
+	fi
+
+# `--no-git` keeps the libs out of the index. `--shallow` matters because
+# openzeppelin's full history is large enough that a plain clone can time out and
+# leave a half-installed lib/ behind. Failures are NOT swallowed: a silent
+# `|| true` here once reported "Setup complete" while leaving the contracts
+# unbuildable, and `make test` then failed with an unresolved-import error that
+# pointed nowhere near the cause.
 .PHONY: setup-contracts
-setup-contracts: ## Install Foundry dependencies
-	@command -v forge >/dev/null 2>&1 || { \
-		echo "Foundry is not installed (optional - only needed for contracts)."; \
+setup-contracts: ## Install Foundry dependencies (skipped if Foundry is absent)
+	@if ! command -v forge >/dev/null 2>&1; then \
+		echo "Foundry is not installed (optional - only needed for the contracts)."; \
 		echo "  curl -L https://foundry.paradigm.xyz | bash && foundryup"; \
-		exit 0; }
-	cd $(CONTRACTS) && forge install OpenZeppelin/openzeppelin-contracts@v5.1.0 --no-git 2>/dev/null || true
-	cd $(CONTRACTS) && forge install foundry-rs/forge-std --no-git 2>/dev/null || true
+	else \
+		cd $(CONTRACTS) && \
+		{ [ -d lib/openzeppelin-contracts ] || \
+			forge install --shallow --no-git OpenZeppelin/openzeppelin-contracts@v5.1.0; } && \
+		{ [ -d lib/forge-std ] || \
+			forge install --shallow --no-git foundry-rs/forge-std; } && \
+		echo "Contract dependencies present."; \
+	fi
 
 # ---------------------------------------------------------------------------
 # run
@@ -55,6 +79,10 @@ setup-contracts: ## Install Foundry dependencies
 .PHONY: dev
 dev: ## Run the API on :8000
 	cd $(ORCHESTRATION) && .venv/bin/uvicorn cowrie.main:app --reload --port 8000
+
+.PHONY: web
+web: ## Run the six web surfaces on :3000 (needs `make dev` in another terminal)
+	cd $(SURFACES) && npm run dev
 
 .PHONY: seed
 seed: ## Reset the database and reseed the demo data
@@ -99,8 +127,13 @@ test-api: ## Run the Python requirement tests
 	cd $(ORCHESTRATION) && .venv/bin/python -m pytest tests/ -v
 
 .PHONY: test-contracts
-test-contracts: ## Run the Foundry contract tests
-	cd $(CONTRACTS) && forge test -vv
+test-contracts: ## Run the Foundry contract tests (skipped if Foundry is absent)
+	@if command -v forge >/dev/null 2>&1; then \
+		cd $(CONTRACTS) && forge test -vv; \
+	else \
+		echo "Foundry not installed - skipping the 22 contract tests."; \
+		echo "  curl -L https://foundry.paradigm.xyz | bash && foundryup"; \
+	fi
 
 .PHONY: lint
 lint: ## Lint and format-check the Python tier

@@ -175,6 +175,30 @@ curl http://localhost:8000/health
 Then open the interactive API documentation at
 **http://localhost:8000/docs**.
 
+**6. Start the web surfaces**
+
+The API and the interfaces are separate services, so this is a second terminal.
+Leave `make dev` running in the first one.
+
+```bash
+make web
+```
+
+Open **http://localhost:3000**. All six interfaces are there: `/` `/pay`
+`/admin` `/developers` `/transparency` `/regulator`.
+
+Nothing to configure — `surfaces/next.config.ts` proxies `/api/*` to
+`http://127.0.0.1:8000` by default, which is where `make dev` put the API. If you
+run the API somewhere else, point the browser at it directly:
+
+```bash
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8001 make web
+```
+
+You do not need this step to exercise the system — every endpoint is reachable
+from `/docs` and from the curl walkthrough below — but the six interfaces of
+SRS §3.1 only exist here.
+
 ### Getting into each surface
 
 Only the admin console has an account waiting for you. The other three are
@@ -303,7 +327,7 @@ reaches Base mainnet or Base Sepolia**, and no funded key exists.
 make test
 ```
 
-**99 Python tests** covering the requirements — the fee arithmetic, the state
+**100 Python tests** covering the requirements — the fee arithmetic, the state
 machine's refusal to make illegal moves, the settlement guarantee, the mint
 gate, the audit chain, and API idempotency.
 
