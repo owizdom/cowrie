@@ -443,6 +443,8 @@ def create_webhook(
     note in services/webhooks.py.
     """
     secret, prefix = generate_webhook_secret()
+    # SRS 3.3 rotates signing secrets on the same 90-day clock as the keys.
+    expires = datetime.now(UTC) + timedelta(days=KEY_LIFETIME_DAYS)
     endpoint = Webhook(
         partnerId=key.partnerId,
         url=body.url,
@@ -450,6 +452,7 @@ def create_webhook(
         events=body.events,
         signingSecretPrefix=prefix,
         environment=key.environment,
+        expiresAt=expires,
     )
     endpoint._secretHash = secret
     db.add(endpoint)
@@ -461,8 +464,53 @@ def create_webhook(
         "events": endpoint.events,
         "status": str(endpoint.status),
         "signingSecret": secret,
+        "expiresAt": expires.isoformat(),
         "warning": "This signing secret is shown once. Store it now.",
+        "rotateUrl": f"/v1/webhooks/{endpoint.id}/rotate",
         "signatureScheme": "HMAC-SHA256 over '{timestamp}.{body}', header 'Cowrie-Signature: t=..,v1=..'",
+    }
+
+
+@router.post("/webhooks/{webhook_id}/rotate")
+def rotate_webhook_secret(
+    webhook_id: str,
+    key: ApiKey = Depends(require_scope("payments:write")),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Issue a fresh signing secret for an endpoint (SRS 3.3).
+
+    Rotation has to be self-service or the 90-day clock becomes an outage: a
+    partner needs to be able to replace a secret before it lapses, at a moment
+    of their choosing. The old secret stops working immediately - unlike an API
+    key, there is only ever one signing secret per endpoint, so there is no
+    overlap window to manage and no ambiguity about which one signed a payload.
+    """
+    endpoint = db.get(Webhook, webhook_id)
+    if endpoint is None or endpoint.partnerId != key.partnerId:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such webhook endpoint")
+
+    secret, prefix = generate_webhook_secret()
+    expires = datetime.now(UTC) + timedelta(days=KEY_LIFETIME_DAYS)
+    endpoint._secretHash = secret
+    endpoint.signingSecretPrefix = prefix
+    endpoint.expiresAt = expires
+
+    audit.record(
+        db,
+        entity_type="Webhook",
+        entity_id=endpoint.id,
+        action="webhook.secret_rotated",
+        actor=ActorType.SYSTEM,
+        actor_id=f"apikey:{key.prefix}",
+        after={"prefix": prefix, "expiresAt": expires.isoformat()},
+    )
+    db.commit()
+
+    return {
+        "id": endpoint.id,
+        "signingSecret": secret,
+        "expiresAt": expires.isoformat(),
+        "warning": "This signing secret is shown once. The previous one no longer verifies.",
     }
 
 
@@ -482,6 +530,11 @@ def list_webhooks(
                 "events": w.events,
                 "status": str(w.status),
                 "signingSecretPrefix": w.signingSecretPrefix,
+                # SRS 3.3 - so a partner can see the rotation coming rather than
+                # discovering it when deliveries stop.
+                "expiresAt": w.expiresAt.isoformat() if w.expiresAt else None,
+                "daysUntilExpiry": w.daysUntilExpiry(),
+                "active": w.isActive(),
                 "createdAt": w.createdAt.isoformat(),
             }
             for w in rows

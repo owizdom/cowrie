@@ -1181,6 +1181,108 @@ class TestDemoCredentials:
 NON_FINITE = ["NaN", "nan", "-NaN", "sNaN", "Infinity", "-Infinity", "1e999"]
 
 
+class TestWebhookSecretRotation:
+    """SRS 3.3: "API keys **and** webhook signing secrets are rotated every 90
+    days." The key half was enforced; the secret half was not modelled at all."""
+
+    def _endpoint(self, client, db) -> tuple[dict, dict]:
+        headers = {"X-API-Key": _api_key(db)}
+        created = client.post(
+            "/v1/webhooks",
+            headers=headers,
+            json={"url": "https://partner.example.com/hook", "events": ["payment.settled"]},
+        )
+        assert created.status_code == 201, created.text
+        return headers, created.json()
+
+    def test_a_signing_secret_is_issued_with_a_ninety_day_life(self, client, db):
+        from datetime import UTC, datetime
+
+        headers, created = self._endpoint(client, db)
+        assert created["signingSecret"].startswith("whsec_")
+
+        days = (datetime.fromisoformat(created["expiresAt"]) - datetime.now(UTC)).days
+        assert 88 <= days <= 90, f"expected a ~90 day life, got {days}"
+
+        listed = client.get("/v1/webhooks", headers=headers).json()["data"][0]
+        assert listed["daysUntilExpiry"] is not None
+        assert listed["active"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_lapsed_secret_stops_deliveries(self, client, db):
+        """Otherwise the rotation policy exists only in the documentation."""
+        from sqlalchemy import select
+
+        from cowrie.models import Webhook, utcnow
+        from cowrie.services import webhooks
+
+        headers, created = self._endpoint(client, db)
+
+        endpoint = db.execute(select(Webhook).where(Webhook.id == created["id"])).scalar_one()
+        partner_id = endpoint.partnerId
+
+        # Wind the clock past the ninety days.
+        from datetime import timedelta
+
+        endpoint.expiresAt = utcnow() - timedelta(days=1)
+        db.commit()
+
+        assert endpoint.isActive() is False
+        delivered = await webhooks.deliver(
+            db, partner_id=partner_id, event="payment.settled", payload={"id": "pi_x"}
+        )
+        assert delivered == [], "a lapsed signing secret must not sign anything"
+
+        listed = client.get("/v1/webhooks", headers=headers).json()["data"][0]
+        assert listed["active"] is False
+        assert listed["daysUntilExpiry"] == 0
+
+    def test_rotation_issues_a_fresh_secret_and_resets_the_clock(self, client, db):
+        from datetime import UTC, datetime
+
+        from sqlalchemy import select
+
+        from cowrie.models import Webhook, utcnow
+
+        headers, created = self._endpoint(client, db)
+
+        from datetime import timedelta
+
+        endpoint = db.execute(select(Webhook).where(Webhook.id == created["id"])).scalar_one()
+        endpoint.expiresAt = utcnow() - timedelta(days=1)
+        db.commit()
+
+        rotated = client.post(f"/v1/webhooks/{created['id']}/rotate", headers=headers)
+        assert rotated.status_code == 200, rotated.text
+        body = rotated.json()
+
+        assert body["signingSecret"] != created["signingSecret"]
+        assert 88 <= (datetime.fromisoformat(body["expiresAt"]) - datetime.now(UTC)).days <= 90
+
+        db.expire_all()
+        assert client.get("/v1/webhooks", headers=headers).json()["data"][0]["active"] is True
+
+    def test_rotation_refuses_another_partners_endpoint(self, client, db):
+        headers, created = self._endpoint(client, db)
+
+        from cowrie.models import ApiKey
+        from cowrie.security import hash_secret
+
+        other = ApiKey(
+            partnerId="partner-other", scopes="payments:read payments:write",
+            partnerName="Other Ltd", prefix="ck_sandbox_bbbbbb", environment="sandbox",
+        )
+        other._keyHash = hash_secret("ck_sandbox_" + "b" * 32)
+        db.add(other)
+        db.commit()
+
+        response = client.post(
+            f"/v1/webhooks/{created['id']}/rotate",
+            headers={"X-API-Key": "ck_sandbox_" + "b" * 32},
+        )
+        assert response.status_code == 404
+
+
 class TestInputHardening:
     def _consumer(self, client) -> dict:
         start = client.post(

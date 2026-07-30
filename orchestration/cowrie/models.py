@@ -635,6 +635,24 @@ class Webhook(AuditableEntity):
     events: Mapped[list] = mapped_column(JSON, default=list)
     signingSecretPrefix: Mapped[str] = mapped_column(String(24), default="")
     environment: Mapped[str] = mapped_column(String(16), default="sandbox")
+    expiresAt: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
+    """SRS 3.3 - "API keys **and webhook signing secrets** are rotated every 90
+    days". The key half was enforced and this half was not, so a signing secret
+    lived forever. Deliveries stop when it lapses, which is what makes the stated
+    practice a real one rather than a note in a document."""
+
+    def isActive(self) -> bool:
+        """Mirrors ApiKey.isActive: revoked or lapsed both mean unusable."""
+        if self.status != WebhookStatus.ACTIVE:
+            return False
+        if self.expiresAt is not None and utcnow() >= self.expiresAt:
+            return False
+        return True
+
+    def daysUntilExpiry(self) -> int | None:
+        if self.expiresAt is None:
+            return None
+        return max(0, (self.expiresAt - utcnow()).days)
 
 
 class WebhookDelivery(Base):

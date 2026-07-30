@@ -109,6 +109,12 @@ async def deliver(
     for endpoint in endpoints:
         if endpoint.events and event not in endpoint.events:
             continue
+        # SRS 3.3 - a lapsed signing secret is not a usable one. Signing with it
+        # anyway would be the rotation policy existing on paper only; the
+        # endpoint stays listed, with its expiry visible, so the partner can
+        # rotate and resume rather than wonder why events stopped.
+        if not endpoint.isActive():
+            continue
         deliveries.append(await _attempt(db, endpoint, event, payload, attempt=1))
 
     return deliveries
@@ -189,7 +195,9 @@ async def retry_pending() -> int:
 
         for delivery in due:
             webhook = db.get(Webhook, delivery.webhookId)
-            if webhook is None or webhook.status != WebhookStatus.ACTIVE:
+            # Same gate as the first attempt: an endpoint that was revoked, or
+            # whose signing secret lapsed, mid-backoff is not retried.
+            if webhook is None or not webhook.isActive():
                 delivery.givenUp = True
                 continue
 
