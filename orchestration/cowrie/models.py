@@ -532,6 +532,15 @@ class PaymentIntent(AuditableEntity):
     idempotencyKey: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     """FR 4.1 - "Each write request must include a unique ID to prevent
     duplicates"."""
+    requestHash: Mapped[str] = mapped_column(String(64), default="")
+    """SHA-256 of the request this key was first used with.
+
+    Without it, a key can only answer "have I seen this id before" - which means
+    the same key sent with a *different* body returns the first payment and
+    reports success. A partner asking to pay one person is told their payment to
+    somebody else went through. Storing the request is what lets the replay be
+    distinguished from the collision.
+    """
     status: Mapped[IntentStatus] = mapped_column(
         EnumString(IntentStatus), default=IntentStatus.CREATED, index=True
     )

@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,7 @@ from ..models import (
     utcnow,
 )
 from ..money import MoneyAmount, parse_amount
+from ..schemas import RequestModel
 from ..services import audit, kyc_service, monitoring, reserve_service
 from .deps import require_role
 
@@ -220,7 +221,7 @@ def transaction_detail(
 # ---------------------------------------------------------------------------
 
 
-class KycDecision(BaseModel):
+class KycDecision(RequestModel):
     decision: str = Field(description="APPROVE | REJECT | FREEZE")
     reason: str = ""
 
@@ -278,7 +279,7 @@ async def decide_kyc(
 # ---------------------------------------------------------------------------
 
 
-class DisputeDecision(BaseModel):
+class DisputeDecision(RequestModel):
     action: str = Field(description="RESOLVE | REJECT | ESCALATE")
     resolution: str = ""
 
@@ -465,7 +466,7 @@ def users(
 # ---------------------------------------------------------------------------
 
 
-class MintRequest(BaseModel):
+class MintRequest(RequestModel):
     amount: MoneyAmount
     usdDepositReference: str = Field(
         default="", description="Banking partner's confirmation of the matching USD deposit"
@@ -473,7 +474,7 @@ class MintRequest(BaseModel):
     approvals: int = Field(default=3, description="Treasury signatures held (NFR 2 needs >= 3 of 5)")
 
 
-class BurnRequest(BaseModel):
+class BurnRequest(RequestModel):
     amount: MoneyAmount
     approvals: int = 3
 
@@ -765,7 +766,7 @@ def performance_report(
 # ---------------------------------------------------------------------------
 
 
-class NewOperator(BaseModel):
+class NewOperator(RequestModel):
     email: str = Field(min_length=5, max_length=255)
     fullName: str = Field(min_length=2, max_length=160)
     role: AdminRole = AdminRole.SUPPORT

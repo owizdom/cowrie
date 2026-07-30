@@ -1181,6 +1181,211 @@ class TestDemoCredentials:
 NON_FINITE = ["NaN", "nan", "-NaN", "sNaN", "Infinity", "-Infinity", "1e999"]
 
 
+NUL = chr(0)
+
+
+class TestIdempotencyConflict:
+    """FR 4.1: "a unique ID to prevent duplicates".
+
+    A key that has been seen before is either a retry or a collision, and the two
+    need opposite answers. Only the retry was handled, so a collision returned
+    201 and the *first* payment - telling a partner who asked to pay one person
+    that their payment to somebody else had succeeded.
+    """
+
+    def _body(self, name: str, amount: str) -> dict:
+        return {
+            "amount": amount, "recipientName": name,
+            "recipientMsisdn": "+254712345678",
+        }
+
+    def test_fr41_the_same_key_with_a_different_body_is_a_conflict(self, client, db):
+        headers = {"X-API-Key": _api_key(db), "Idempotency-Key": "conflict-key-1"}
+
+        first = client.post("/v1/payment_intents", headers=headers, json=self._body("Alice", "1000"))
+        assert first.status_code == 201
+
+        second = client.post("/v1/payment_intents", headers=headers, json=self._body("Bob", "9999"))
+        assert second.status_code == 409, (
+            f"expected 409, got {second.status_code} — a different request under a used key "
+            "must never be answered with the first payment"
+        )
+
+        # The original must be untouched, and still retrievable as itself.
+        again = client.post("/v1/payment_intents", headers=headers, json=self._body("Alice", "1000"))
+        assert again.status_code == 201
+        assert again.json()["id"] == first.json()["id"]
+        assert again.json()["recipient"]["name"] == "Alice"
+
+    def test_fr41_the_same_key_with_the_same_body_still_replays(self, client, db):
+        """The idempotency guarantee itself has to survive the fix."""
+        from sqlalchemy import func, select
+
+        from cowrie.models import Transaction
+
+        headers = {"X-API-Key": _api_key(db), "Idempotency-Key": "replay-key-1"}
+        body = self._body("Mary Wanjiru", "50000")
+
+        first = client.post("/v1/payment_intents", headers=headers, json=body)
+        db.expire_all()
+        count_after_first = db.execute(select(func.count()).select_from(Transaction)).scalar_one()
+
+        second = client.post("/v1/payment_intents", headers=headers, json=body)
+        assert second.status_code == 201
+        assert second.json()["id"] == first.json()["id"]
+
+        db.expire_all()
+        assert (
+            db.execute(select(func.count()).select_from(Transaction)).scalar_one()
+            == count_after_first
+        ), "a replay must not create a second transaction"
+
+    def test_key_order_does_not_count_as_a_different_request(self, client, db):
+        """A retry that reorders its JSON keys is still the same request."""
+        headers = {"X-API-Key": _api_key(db), "Idempotency-Key": "reorder-key-1"}
+
+        first = client.post(
+            "/v1/payment_intents",
+            headers=headers,
+            json={"recipientMsisdn": "+254712345678", "amount": "1000", "recipientName": "Alice"},
+        )
+        second = client.post(
+            "/v1/payment_intents",
+            headers=headers,
+            json={"amount": "1000", "recipientName": "Alice", "recipientMsisdn": "+254712345678"},
+        )
+        assert second.status_code == 201
+        assert second.json()["id"] == first.json()["id"]
+
+    def test_an_over_long_idempotency_key_is_refused(self, client, db):
+        """It overflowed varchar(120) and surfaced as a 500."""
+        key = _api_key(db)
+        body = self._body("Alice", "1000")
+
+        assert client.post(
+            "/v1/payment_intents",
+            headers={"X-API-Key": key, "Idempotency-Key": "a" * 120},
+            json=body,
+        ).status_code == 201
+
+        response = client.post(
+            "/v1/payment_intents",
+            headers={"X-API-Key": key, "Idempotency-Key": "b" * 121},
+            json=body,
+        )
+        assert response.status_code == 422, f"expected 422, got {response.status_code}"
+
+
+class TestNulBytes:
+    """A NUL cannot be stored, so it is the caller's error, not the server's."""
+
+    ENDPOINTS = [
+        ("/v1/partners", {"organisation": f"Ac{NUL}me", "fullName": "Test Person",
+                          "email": "nul@example.com"}),
+        ("/support/tickets", {"subject": f"Te{NUL}st",
+                              "body": "a body long enough to pass validation"}),
+        ("/kyc/link-account", {"kind": "BANK", "institution": f"GT{NUL}B",
+                               "accountNumber": "0123454417"}),
+    ]
+
+    @pytest.mark.parametrize("path,body", ENDPOINTS)
+    def test_a_null_byte_in_a_request_body_is_refused(self, client, db, path, body):
+        response = client.post(path, json=body)
+        assert response.status_code != 500, f"{path} answered 500 for a NUL in its body"
+        assert 400 <= response.status_code < 500
+
+    def test_a_null_byte_in_a_transfer_recipient_is_refused(self, client, db):
+        key = _api_key(db)
+        response = client.post(
+            "/v1/payment_intents",
+            headers={"X-API-Key": key, "Idempotency-Key": "nul-body-1"},
+            json={"amount": "1000", "recipientName": f"Ma{NUL}ry",
+                  "recipientMsisdn": "+254712345678"},
+        )
+        assert response.status_code == 422, f"expected 422, got {response.status_code}"
+
+    def test_a_null_byte_cannot_brick_a_registration(self, client):
+        """`start` used to accept it and `verify` then failed forever.
+
+        The caller was left holding a challenge that could never be redeemed and
+        no account, with no way to tell why. Refusing at `start` is what makes
+        that state unreachable.
+        """
+        response = client.post(
+            "/auth/register/start",
+            json={
+                "fullName": f"Te{NUL}st", "phone": "+2348099911122",
+                "email": "brick@example.com", "country": "NG", "pin": "654321",
+            },
+        )
+        assert response.status_code == 422, (
+            f"expected 422, got {response.status_code} — accepting this creates an "
+            "unredeemable challenge"
+        )
+
+    def test_a_null_byte_in_a_path_parameter_is_refused(self, client, db):
+        from cowrie.enums import AdminRole
+
+        admin = {"Authorization": f"Bearer {_admin_token(client, db, AdminRole.SUPPORT)}"}
+        response = client.get("/admin/transactions/%00", headers=admin)
+        assert response.status_code == 400
+        assert response.json()["error"]["type"] == "invalid_request"
+
+    def test_legitimate_strings_are_untouched(self, client, db):
+        """The guard must refuse one byte, not a class of input.
+
+        Names carry apostrophes, accents and hyphens; a filter that guessed at
+        malice would reject real people.
+        """
+        key = _api_key(db)
+        # The idempotency key stays ASCII because it is an HTTP header; the name
+        # under test goes in the body, which is where a real one would arrive.
+        for index, name in enumerate(["O'Brien", "Zoë Ngũgĩ", "Jean-Luc", "Mary Wanjiru", "李小龍"]):
+            response = client.post(
+                "/v1/payment_intents",
+                headers={"X-API-Key": key, "Idempotency-Key": f"legit-{index}"},
+                json={"amount": "1000", "recipientName": name,
+                      "recipientMsisdn": "+254712345678"},
+            )
+            assert response.status_code == 201, f"{name!r} was refused: {response.text}"
+
+
+class TestQuoteFloor:
+    def test_a_quote_priced_worse_than_the_benchmark_is_refused(self, client, db):
+        """Flat gas dominates a small principal: 6.29 NGN quoted at 98% fees."""
+        key = _api_key(db)
+        response = client.get("/v1/quotes/reverse?destinationAmount=0.01", headers={"X-API-Key": key})
+        assert 400 <= response.status_code < 500, (
+            f"expected a refusal, got {response.status_code}"
+        )
+        assert "minimum" in response.json()["detail"].lower()
+
+    def test_realistic_amounts_are_unaffected(self):
+        """The floor must not have moved into territory a real sender uses."""
+        from cowrie.services.quote_engine import engine
+
+        for amount in ["100", "1000", "5000", "50000", "1000000"]:
+            quote = engine.quote(source_amount=Decimal(amount))
+            assert quote.destination.amount > 0, f"{amount} NGN was refused"
+
+    def test_the_floor_is_where_the_message_says_it_is(self):
+        from cowrie.services.quote_engine import MAX_COST_RATIO, engine
+
+        with pytest.raises(ValueError, match="minimum"):
+            engine.quote(source_amount=Decimal("50"))
+
+        # Just above the floor still prices, and prices within the stated bound.
+        quote = engine.quote(source_amount=Decimal("100"))
+        assert quote.costRatio() <= MAX_COST_RATIO
+
+
+class TestDemoControls:
+    def test_accelerate_refuses_an_unknown_transfer(self, client):
+        """It answered 200 carrying {"error": ...}, which reads as success."""
+        response = client.post("/demo/accelerate/11111111-2222-3333-4444-555555555555")
+        assert response.status_code == 404
+
+
 class TestWebhookSecretRotation:
     """SRS 3.3: "API keys **and** webhook signing secrets are rotated every 90
     days." The key half was enforced; the secret half was not modelled at all."""

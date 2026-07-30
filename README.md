@@ -303,7 +303,7 @@ reaches Base mainnet or Base Sepolia**, and no funded key exists.
 make test
 ```
 
-**84 Python tests** covering the requirements — the fee arithmetic, the state
+**99 Python tests** covering the requirements — the fee arithmetic, the state
 machine's refusal to make illegal moves, the settlement guarantee, the mint
 gate, the audit chain, and API idempotency.
 

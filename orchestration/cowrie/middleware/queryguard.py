@@ -30,16 +30,19 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 class QueryGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # The raw query string is checked rather than the parsed values, so a
-        # NUL is caught however it was encoded and whatever parameter carries it.
-        if "\x00" in request.url.query or "%00" in request.url.query.lower():
+        # The raw query string and path are checked rather than the parsed
+        # values, so a NUL is caught however it was encoded and whichever
+        # parameter carries it. The path matters too: an id in the URL becomes a
+        # query parameter against the database just as surely as `?id=` does.
+        suspect = f"{request.url.path}?{request.url.query}"
+        if "\x00" in suspect or "%00" in suspect.lower():
             return JSONResponse(
                 status_code=400,
                 content={
                     "error": {
                         "type": "invalid_request",
                         "message": (
-                            "A query parameter contains a NUL byte, which cannot be stored. "
+                            "The request URL contains a NUL byte, which cannot be stored. "
                             "Remove it and retry."
                         ),
                     }

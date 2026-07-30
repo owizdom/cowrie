@@ -12,19 +12,34 @@ FR 4.3  Signed webhooks (services/webhooks.py)
 Idempotency (FR 4.1)
 --------------------
 "Each write request must include a unique ID to prevent duplicates."  The header
-is `Idempotency-Key` and it is mandatory, not optional.  A repeat of the same
-key returns the original result rather than creating a second payment - the
-uniqueness is enforced by a database constraint on PaymentIntent.idempotencyKey,
-so two concurrent identical requests cannot both succeed.
+is `Idempotency-Key` and it is mandatory, not optional.  Uniqueness is enforced by
+a database constraint on PaymentIntent.idempotencyKey, so two concurrent identical
+requests cannot both succeed.
+
+A key that has been seen before is one of two different situations and they need
+opposite answers:
+
+    same key, same request        the caller is retrying. Return the original
+                                  payment. This is what idempotency is for.
+
+    same key, different request   the caller has a key-reuse bug. Refuse with
+                                  409.
+
+Only the first behaviour used to exist, so the second returned 201 and the *first*
+payment - telling a partner who asked to pay one person that their payment to
+somebody else had succeeded, and handing back a description of neither. The
+request is fingerprinted at creation (`_request_fingerprint`) so the two cases can
+be told apart.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -33,7 +48,8 @@ from ..db import get_session
 from ..enums import ActorType, DemoScenario, IntentStatus, TransactionState, WebhookStatus
 from ..models import ApiKey, PaymentIntent, Transaction, User, Webhook
 from ..money import MoneyAmount, parse_amount
-from ..security import generate_key_pair, generate_webhook_secret, hash_secret
+from ..schemas import RequestModel
+from ..security import generate_key_pair, generate_webhook_secret, hash_secret, sha256_hex
 from ..services import audit, transfer_service, webhooks
 from ..services.quote_engine import engine as quote_engine
 from .deps import require_scope
@@ -49,7 +65,7 @@ KEY_LIFETIME_DAYS = 90
 # ---------------------------------------------------------------------------
 
 
-class PaymentIntentRequest(BaseModel):
+class PaymentIntentRequest(RequestModel):
     """FR 4.2 - source currency, destination currency, amount, recipient, and a
     reference of the partner's choice."""
 
@@ -67,7 +83,7 @@ class PaymentIntentRequest(BaseModel):
         return v.upper()
 
 
-class WebhookRequest(BaseModel):
+class WebhookRequest(RequestModel):
     url: str = Field(min_length=8, max_length=500)
     events: list[str] = Field(default_factory=lambda: ["payment.settled", "payment.failed"])
 
@@ -85,6 +101,21 @@ class WebhookRequest(BaseModel):
         if unknown:
             raise ValueError(f"unknown events: {sorted(unknown)}; valid: {sorted(webhooks.EVENTS)}")
         return v
+
+
+def _request_fingerprint(body: PaymentIntentRequest) -> str:
+    """Hash the request an idempotency key was used with.
+
+    Taken over the *validated* body rather than the raw bytes, so a retry that
+    differs only in key order or whitespace is still recognised as the same
+    request - which is what a retrying client actually sends. `sort_keys` is the
+    same canonical-JSON shape services/audit.py uses, so the codebase has one
+    notion of what "the same payload" means.
+    """
+    canonical = json.dumps(
+        body.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), default=str
+    )
+    return sha256_hex(canonical)
 
 
 def _intent_view(intent: PaymentIntent, tx: Transaction | None) -> dict:
@@ -123,7 +154,13 @@ def _intent_view(intent: PaymentIntent, tx: Transaction | None) -> dict:
 @router.post("/payment_intents", status_code=status.HTTP_201_CREATED)
 async def create_payment_intent(
     body: PaymentIntentRequest,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: str | None = Header(
+        default=None,
+        alias="Idempotency-Key",
+        # Matches PaymentIntent.idempotencyKey's column width. Without it an
+        # over-long key overflowed varchar(120) and surfaced as a 500.
+        max_length=120,
+    ),
     key: ApiKey = Depends(require_scope("payments:write")),
     db: Session = Depends(get_session),
 ) -> dict:
@@ -140,7 +177,10 @@ async def create_payment_intent(
             "An Idempotency-Key header is required on every write request (FR 4.1).",
         )
 
-    # Replay of a key we have already seen returns the original result.
+    request_hash = _request_fingerprint(body)
+
+    # A key we have seen before is either a retry of the same request or a
+    # collision with a different one, and the two need opposite answers.
     existing = db.execute(
         select(PaymentIntent).where(PaymentIntent.idempotencyKey == idempotency_key)
     ).scalar_one_or_none()
@@ -149,6 +189,22 @@ async def create_payment_intent(
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "That idempotency key belongs to another API key."
             )
+
+        # Same key, different request. Returning the first payment here would
+        # tell the caller their *second* one succeeded and hand back a
+        # description of the first - a false report about money. Refuse, and say
+        # which of the two possibilities it is.
+        #
+        # `requestHash` is empty on rows written before the column existed, and
+        # those replay as they always did rather than 409 on a comparison that
+        # cannot be made.
+        if existing.requestHash and existing.requestHash != request_hash:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "That idempotency key was already used for a different payment. "
+                "Use a new key, or resend the original request unchanged to retrieve it.",
+            )
+
         tx = db.get(Transaction, existing.transactionId) if existing.transactionId else None
         return _intent_view(existing, tx)
 
@@ -167,6 +223,7 @@ async def create_payment_intent(
 
     intent = PaymentIntent(
         idempotencyKey=idempotency_key,
+        requestHash=request_hash,
         apiKeyId=key.id,
         status=IntentStatus.CREATED,
         sourceCurrency=body.sourceCurrency,
@@ -577,7 +634,7 @@ def webhook_deliveries(
 # ---------------------------------------------------------------------------
 
 
-class PartnerSignup(BaseModel):
+class PartnerSignup(RequestModel):
     """A business registering for API access."""
 
     organisation: str = Field(min_length=2, max_length=160)

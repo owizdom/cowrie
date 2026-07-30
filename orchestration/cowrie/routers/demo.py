@@ -21,7 +21,7 @@ and main.py enforces that rather than relying on a convention.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -174,7 +174,9 @@ async def accelerate(transfer_id: str, db: Session = Depends(get_session)) -> di
 
     tx = db.get(Transaction, transfer_id)
     if tx is None:
-        return {"error": "Transfer not found"}
+        # A 200 carrying {"error": ...} tells a client the call succeeded and
+        # leaves it to notice otherwise. The status code is the answer.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Transfer not found")
 
     tx.stateEnteredAt = tx.stateEnteredAt - timedelta(seconds=settings.stuck_cancel_seconds + 5)
     db.commit()

@@ -51,6 +51,23 @@ from ..models import FeeBreakdown, Money
 TWO_PLACES = Decimal("0.01")
 SIX_PLACES = Decimal("0.000001")
 
+#: The World Bank figure for sending $200 within Sub-Saharan Africa, published on
+#: the transparency page and quoted in the problem statement.
+BENCHMARK_COST_PERCENT = "7.4"
+
+#: Refuse to price a transfer whose all-in cost exceeds this. Set above the
+#: benchmark rather than at the sub-1% target: the target is what the corridor
+#: achieves at any sensible size, while this is the point past which a quote
+#: would be actively worse than doing nothing.
+MAX_COST_RATIO = Decimal("0.10")
+
+
+def _proportional_rate() -> Decimal:
+    """The share of the principal taken as fees, excluding flat network gas."""
+    return Decimal(
+        settings.fx_spread_bps + settings.liquidity_spread_bps + settings.cowrie_fee_bps
+    ) / Decimal(10_000)
+
 
 def _money(value: Decimal) -> Decimal:
     return value.quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
@@ -145,6 +162,26 @@ class QuoteEngine:
         net_ngn = source_amount - fees.total()
         if net_ngn <= 0:
             raise ValueError("amount is too small to cover the network cost of the transfer")
+
+        # A transfer priced worse than the corridor Cowrie exists to replace is
+        # not one worth quoting. Network gas is a flat charge, so on a small
+        # enough principal it dominates: 6.29 NGN used to quote successfully with
+        # fees at 98% of the amount sent. Bounding the ratio against the
+        # published 7.4% benchmark rather than picking a round number keeps the
+        # refusal answerable - and lands the floor near 68 NGN, so nothing a real
+        # sender would attempt is affected.
+        if fees.total() / source_amount > MAX_COST_RATIO:
+            minimum = _money(
+                Decimal(str(settings.network_gas_usd))
+                * Decimal(str(settings.mid_market_ngn_per_usd))
+                / (MAX_COST_RATIO - _proportional_rate())
+            )
+            raise ValueError(
+                f"amount is too small to send economically: the fees would be more than "
+                f"{MAX_COST_RATIO * 100:.0f}% of it, which is worse than the "
+                f"{BENCHMARK_COST_PERCENT}% average this corridor replaces. "
+                f"The minimum is about {minimum} NGN."
+            )
 
         destination_amount = _money(net_ngn / mid)
 

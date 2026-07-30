@@ -17,20 +17,21 @@ case drift apart.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..enums import ActorType, DisputeStatus
 from ..models import Dispute, Transaction, User
+from ..schemas import RequestModel
 from ..services import audit
 from .deps import current_user
 
 router = APIRouter(prefix="/support", tags=["support"])
 
 
-class TicketRequest(BaseModel):
+class TicketRequest(RequestModel):
     subject: str = Field(min_length=4, max_length=200)
     body: str = Field(min_length=10, max_length=4000)
     transactionReference: str | None = None

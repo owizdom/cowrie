@@ -11,7 +11,7 @@ documents in a demo database would be a liability with no upside.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,13 +19,14 @@ from ..db import get_session
 from ..enums import ActorType, KycIdType
 from ..models import KycSubmission, User, WalletMovement
 from ..money import MoneyAmount, parse_amount
+from ..schemas import RequestModel
 from ..services import audit, kyc_service
 from .deps import current_user
 
 router = APIRouter(prefix="/kyc", tags=["kyc"])
 
 
-class KycSubmitRequest(BaseModel):
+class KycSubmitRequest(RequestModel):
     idType: KycIdType
     idNumber: str = Field(min_length=6, max_length=32)
     documentCaptured: bool = Field(
@@ -36,7 +37,7 @@ class KycSubmitRequest(BaseModel):
     )
 
 
-class LinkAccountRequest(BaseModel):
+class LinkAccountRequest(RequestModel):
     """SRS §2.2 - "associate themselves with a bank or mobile money wallet"."""
 
     kind: str = Field(description="BANK or MOBILE_MONEY")
@@ -171,7 +172,7 @@ def link_account(
     }
 
 
-class TopUpRequest(BaseModel):
+class TopUpRequest(RequestModel):
     amount: MoneyAmount = Field(description="Amount in NGN")
 
 

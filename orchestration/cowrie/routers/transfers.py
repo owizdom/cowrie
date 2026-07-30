@@ -25,7 +25,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,7 @@ from ..db import get_session
 from ..enums import IN_FLIGHT_STATES, DemoScenario, TransactionState
 from ..models import Transaction, User
 from ..money import MoneyAmount, parse_amount
+from ..schemas import RequestModel
 from ..services import transfer_service
 from ..services.otp import requires_step_up
 from ..services.otp import service as otp_service
@@ -54,11 +55,11 @@ _quotes: dict[str, Quote] = {}
 # ---------------------------------------------------------------------------
 
 
-class QuoteRequest(BaseModel):
+class QuoteRequest(RequestModel):
     amount: MoneyAmount = Field(description="Amount in NGN, as a decimal string")
 
 
-class CreateTransfer(BaseModel):
+class CreateTransfer(RequestModel):
     quoteId: str
     recipientName: str = Field(min_length=2, max_length=160)
     recipientMsisdn: str = Field(min_length=9, max_length=24)
@@ -75,7 +76,7 @@ class CreateTransfer(BaseModel):
         return cleaned
 
 
-class ConfirmTransfer(BaseModel):
+class ConfirmTransfer(RequestModel):
     pin: str = Field(min_length=6, max_length=6)
     stepUpChallengeId: str | None = None
     stepUpCode: str | None = None

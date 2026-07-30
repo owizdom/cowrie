@@ -19,7 +19,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,7 @@ from ..config import settings
 from ..db import get_session
 from ..enums import ActorType, KycLevel
 from ..models import AdminUser, User
+from ..schemas import RequestModel
 from ..security import create_token, hash_secret, verify_secret
 from ..services import audit
 from ..services.otp import service as otp_service
@@ -41,7 +42,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # ---------------------------------------------------------------------------
 
 
-class RegisterStart(BaseModel):
+class RegisterStart(RequestModel):
     fullName: str = Field(min_length=2, max_length=160)
     phone: str = Field(min_length=8, max_length=24)
     email: EmailStr
@@ -69,27 +70,27 @@ class RegisterStart(BaseModel):
         return v.upper()
 
 
-class RegisterVerify(BaseModel):
+class RegisterVerify(RequestModel):
     challengeId: str
     code: str = Field(min_length=6, max_length=6)
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(RequestModel):
     phone: str
     pin: str = Field(min_length=6, max_length=6)
 
 
-class AdminLogin(BaseModel):
+class AdminLogin(RequestModel):
     email: EmailStr
     password: str
 
 
-class RegulatorLogin(BaseModel):
+class RegulatorLogin(RequestModel):
     email: EmailStr
     password: str
 
 
-class RegulatorSignup(BaseModel):
+class RegulatorSignup(RequestModel):
     fullName: str = Field(min_length=2, max_length=160)
     email: EmailStr
     regulator: str = Field(default="SEC_NIGERIA")
